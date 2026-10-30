@@ -1,6 +1,6 @@
 # tools/coding — 编码 Agent 工作区工具
 
-为 AI 编码 Agent 提供一组面向模型的工具：读写与精确编辑文件、glob/grep 检索、执行命令、git 操作、待办清单。文件与命令分别经 [`harness/env`](../../harness/env/README.md) 的 `FileSystem` 与 `Executor` 访问；权限、审批、结果溢出等横切能力由 `tools.Pipeline` 承担，对任何工具都生效。
+为 AI 编码 Agent 提供一组面向模型的工具：读写与精确编辑文件、glob/grep 检索、执行命令、git 操作、待办清单。文件与命令分别经 [`harness/env`](https://github.com/kart-io/goagent/tree/master/harness/env) 的 `FileSystem` 与 `Executor` 访问；权限、审批、结果溢出等横切能力由 `tools.Pipeline` 承担，对任何工具都生效。
 
 ```go
 ws, err := coding.NewWorkspace("/path/to/repo",
@@ -50,7 +50,7 @@ agent, _ := builder.NewSimpleBuilder(client).
 
 ## 权限与审批
 
-`coding.DefaultPolicy()` 返回 [`tools/policy`](../policy/policy.go) 规则：放行只读、检索、待办和文件编辑，`run_command`、`git_commit` 需要审批。审批人选择"本会话允许"时：
+`coding.DefaultPolicy()` 返回 [`tools/policy`](https://github.com/kart-io/goagent/tree/master/tools/policy) 规则：放行只读、检索、待办和文件编辑，`run_command`、`git_commit` 需要审批。审批人选择"本会话允许"时：
 
 - `run_command` 收窄为命令前缀（首词，第二个词是子命令时一并取，如 `go test`）；含 shell 控制符、引号或反斜杠的命令只能单次批准；
 - `git_commit` 可整工具放行。
