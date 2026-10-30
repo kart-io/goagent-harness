@@ -1,0 +1,5 @@
+GoAgent Harness
+
+本项目的 preset、tools/coding 及初始示例迁自 github.com/kart-io/goagent。
+来源提交：91649a1（2026-10-30），其上游功能基线为 v0.23.0 / b90c7aa。
+保留原 Apache License 2.0 许可证；原始提交历史见 GoAgent 仓库。
