@@ -5,4 +5,4 @@
 - 从 GoAgent 提取 Preset、编码工具、编码与计划模式示例及原有回归测试。
 - 依赖 GoAgent v0.23.0 的公开接口，保留原有配置格式及行为。
 - 增加公开 API 的持久图审批、工具执行与完成后恢复验证，以及临时 workspace 跨仓验证脚本。
-- 本地仓库尚未发布远程版本；来源和导入迁移见 NOTICE 与 docs/MIGRATION.md。
+- 源码发布到 `kart-io/goagent-harness` 的 `main` 分支，尚未发布版本标签；来源和导入迁移见 NOTICE 与 docs/MIGRATION.md。
