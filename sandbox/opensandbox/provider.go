@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"path"
@@ -24,12 +25,19 @@ import (
 	"github.com/kart-io/goagent/harness/env"
 )
 
+// SupportedExecdImage is a trusted deployment pin, not an image supplied to Create.
+// The host must configure its Docker control service with this exact image.
+const SupportedExecdImage = "opensandbox/execd@sha256:c75836c46ef4302afccec182d5d7339eb2f905f51e3d73b7aa17bb76c832526c"
+
 const providerVersion = "opensandbox/1.2.0+harness-fs1"
 
 // Options contains trusted host configuration, never model tool arguments.
 // The first adapter requires a Docker service and server proxy routing.
 // Zero limits select bounded defaults. Custom HTTP transports must honor context.
 type Options struct {
+	// ExecdImage attests that the trusted Docker service pins this image.
+	// Execd Ping has no build version; this cannot be discovered remotely.
+	ExecdImage                                                          string
 	Connection                                                          sdk.ConnectionConfig
 	Root                                                                string
 	Python                                                              string
@@ -47,6 +55,12 @@ type provider struct {
 
 // New validates configuration before any remote allocation.
 func New(o Options) (sandbox.Provider, error) {
+	if err := checkVersion(sdk.Version, "SDK"); err != nil {
+		return nil, err
+	}
+	if o.ExecdImage != SupportedExecdImage {
+		return nil, fmt.Errorf("%w: trusted Docker deployment must pin SupportedExecdImage", sandbox.ErrUnsupported)
+	}
 	if !o.Connection.UseServerProxy || o.Connection.Retry != nil {
 		return nil, fmt.Errorf("%w: server proxy required; SDK retries disabled", sandbox.ErrUnsupported)
 	}
@@ -188,6 +202,9 @@ func (p *provider) Create(ctx context.Context, r sandbox.Request) (sandbox.Envir
 	seconds := int(p.options.TTL / time.Second)
 	createCtx, cancel := context.WithTimeout(ctx, p.options.StartupTimeout)
 	defer cancel()
+	if err := p.checkServer(createCtx); err != nil {
+		return nil, err
+	}
 	info, e := p.lifecycle.CreateSandbox(createCtx, sdk.CreateSandboxRequest{Image: &sdk.ImageSpec{URI: r.Image}, Timeout: &seconds, ResourceLimits: p.options.ResourceLimits, Metadata: metadata, Entrypoint: []string{"sleep", "infinity"}})
 	if e != nil {
 		var api *sdk.APIError
@@ -213,6 +230,9 @@ func (p *provider) Connect(ctx context.Context, id string, r sandbox.Request) (s
 	instance := &environment{provider: p, id: id}
 	startup, cancel := context.WithTimeout(ctx, p.options.StartupTimeout)
 	defer cancel()
+	if err := p.checkServer(startup); err != nil {
+		return nil, err
+	}
 	if e := p.prepare(startup, instance, r, false); e != nil {
 		return instance, e
 	}
@@ -430,4 +450,44 @@ func (e *environment) Destroy(ctx context.Context) error {
 		}
 	}
 	return &sandbox.UnconfirmedError{CommandID: "create:" + e.owner, Cause: errors.New("creation not reconciled; retain token and retry cleanup before TTL")}
+}
+
+func checkVersion(version, component string) error {
+	if version != "1.2.0" {
+		return fmt.Errorf("%w: %s release %q; require 1.2.0", sandbox.ErrUnsupported, component, version)
+	}
+	return nil
+}
+func (p *provider) checkServer(parent context.Context) error {
+	ctx, cancel := context.WithTimeout(parent, p.options.Connection.GetRequestTimeout())
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, p.base.String()+"/version", nil)
+	if err != nil {
+		return err
+	}
+	for k, v := range p.options.Connection.Headers {
+		request.Header.Set(k, v)
+	}
+	request.Header.Del("OPEN-SANDBOX-API-KEY")
+	request.Header.Del(p.options.Connection.AuthHeader)
+	request.Header.Set(p.options.Connection.AuthHeader, p.options.Connection.APIKey)
+	response, err := p.http.Do(request)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("%w: server version endpoint HTTP %d", sandbox.ErrUnsupported, response.StatusCode)
+	}
+	raw, err := io.ReadAll(response.Body)
+	if err != nil {
+		return err
+	}
+	var version struct {
+		Version string `json:"version"`
+	}
+	if err = json.Unmarshal(raw, &version); err != nil {
+		return err
+	}
+	return checkVersion(version.Version, "server")
 }

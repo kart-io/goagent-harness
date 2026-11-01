@@ -57,7 +57,8 @@ mode="direct"
     except OSError: time.sleep(.2)
    else: raise RuntimeError('control service did not become ready')
    # Workspace resolves this unreleased optional module dependency locally.
-   (temp/'go.work').write_text('go 1.25.0\nuse (\n'+json.dumps(str(repo))+'\n'+json.dumps(str(repo/'sandbox/opensandbox'))+'\n)\nreplace github.com/kart-io/goagent-harness v0.0.0-20261101021826-231f713ad219 => '+json.dumps(str(repo))+'\n')
+   parent_version=re.search(r'github.com/kart-io/goagent-harness (v[^\s]+)',(repo/'sandbox/opensandbox/go.mod').read_text()).group(1)
+   (temp/'go.work').write_text('go 1.25.0\nuse (\n'+json.dumps(str(repo))+'\n'+json.dumps(str(repo/'sandbox/opensandbox'))+'\n)\nreplace github.com/kart-io/goagent-harness '+parent_version+' => '+json.dumps(str(repo))+'\n')
    env.update(GOWORK=str(temp/'go.work'),HARNESS_SANDBOX_DOMAIN=f'127.0.0.1:{port}',HARNESS_SANDBOX_API_KEY=key,HARNESS_SANDBOX_IMAGE=SERVER)
    print('Running real adapter, filesystem, cancellation and lifecycle tests...',flush=True)
    command(['go','test','-race','-v','-count=1','-timeout','240s','-run','TestRealDocker'],cwd=repo/'sandbox/opensandbox',log='real-test.log')

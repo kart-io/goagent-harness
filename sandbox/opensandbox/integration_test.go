@@ -22,7 +22,7 @@ func TestRealDockerLifecycleAndWorkspace(t *testing.T) {
 	if domain == "" {
 		t.Skip("run scripts/verify-sandbox.py for an isolated real Docker service")
 	}
-	p, err := New(Options{Connection: sdk.ConnectionConfig{Domain: domain, Protocol: "http", APIKey: os.Getenv("HARNESS_SANDBOX_API_KEY"), UseServerProxy: true}, MaxOutputBytes: 4096})
+	p, err := New(Options{ExecdImage: SupportedExecdImage, Connection: sdk.ConnectionConfig{Domain: domain, Protocol: "http", APIKey: os.Getenv("HARNESS_SANDBOX_API_KEY"), UseServerProxy: true}, MaxOutputBytes: 4096})
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
@@ -112,7 +112,7 @@ func TestRealDockerPresetAssembly(t *testing.T) {
 	if domain == "" {
 		t.Skip("requires isolated Docker service")
 	}
-	p, err := New(Options{Connection: sdk.ConnectionConfig{Domain: domain, Protocol: "http", APIKey: os.Getenv("HARNESS_SANDBOX_API_KEY"), UseServerProxy: true}})
+	p, err := New(Options{ExecdImage: SupportedExecdImage, Connection: sdk.ConnectionConfig{Domain: domain, Protocol: "http", APIKey: os.Getenv("HARNESS_SANDBOX_API_KEY"), UseServerProxy: true}})
 	require.NoError(t, err)
 	registry := &sandbox.Registry{Namespace: "preset-validation", Providers: map[string]sandbox.Provider{"opensandbox": p}}
 	t.Cleanup(func() {

@@ -30,6 +30,8 @@ func (s *lifecycleServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 	s.auth = append(s.auth, r.Header.Get("OPEN-SANDBOX-API-KEY"))
 	switch {
+	case r.URL.Path == "/version":
+		_, _ = io.WriteString(w, `{"version":"1.2.0"}`)
 	case r.Method == "POST" && r.URL.Path == "/v1/sandboxes":
 		s.creates++
 		_ = json.NewDecoder(r.Body).Decode(&s.create)
@@ -78,7 +80,7 @@ func providerFixture(t *testing.T, state *lifecycleServer) sandbox.Provider {
 	if state.endpoint == "" {
 		state.endpoint = server.URL
 	}
-	p, err := New(Options{Connection: sdk.ConnectionConfig{Domain: strings.TrimPrefix(server.URL, "http://"), Protocol: "http", APIKey: "secret", UseServerProxy: true}, PollInterval: time.Millisecond})
+	p, err := New(Options{ExecdImage: SupportedExecdImage, Connection: sdk.ConnectionConfig{Domain: strings.TrimPrefix(server.URL, "http://"), Protocol: "http", APIKey: "secret", UseServerProxy: true}, PollInterval: time.Millisecond})
 	require.NoError(t, err)
 	return p
 }
@@ -112,7 +114,7 @@ func TestProviderRejectsUnsupportedBeforeAllocation(t *testing.T) {
 	require.ErrorIs(t, err, sandbox.ErrUnsupported)
 	require.Zero(t, state.creates)
 	retry := sdk.DefaultRetryConfig()
-	_, err = New(Options{Connection: sdk.ConnectionConfig{UseServerProxy: true, Retry: &retry}})
+	_, err = New(Options{ExecdImage: SupportedExecdImage, Connection: sdk.ConnectionConfig{UseServerProxy: true, Retry: &retry}})
 	require.Error(t, err)
 }
 func TestProviderInitializationFailurePreservesPartialForCleanup(t *testing.T) {
@@ -134,4 +136,35 @@ func TestMetadataFitsOpenSandboxLabels(t *testing.T) {
 		require.LessOrEqual(t, len(value), 63, key)
 		require.Regexp(t, `^[a-zA-Z0-9]([a-zA-Z0-9_.-]*[a-zA-Z0-9])?$`, value, key)
 	}
+}
+
+func TestReviewRejectsWrongDeployedServerVersion(t *testing.T) {
+	state := &lifecycleServer{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/version" {
+			_, _ = io.WriteString(w, `{"version":"0.99.0"}`)
+			return
+		}
+		state.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	state.endpoint = server.URL
+	p, err := New(Options{ExecdImage: SupportedExecdImage, Connection: sdk.ConnectionConfig{Domain: strings.TrimPrefix(server.URL, "http://"), Protocol: "http", UseServerProxy: true}, PollInterval: time.Millisecond})
+	require.NoError(t, err)
+	e, err := p.Create(context.Background(), sandbox.Request{Scope: "s", Image: "i", Network: true})
+	require.Nil(t, e)
+	require.ErrorIs(t, err, sandbox.ErrUnsupported)
+	require.Zero(t, state.creates)
+	e, err = p.Connect(context.Background(), "one", sandbox.Request{Scope: "s", Image: "i", Network: true})
+	require.Nil(t, e)
+	require.ErrorIs(t, err, sandbox.ErrUnsupported)
+	require.Zero(t, state.creates)
+}
+
+func TestRuntimeReleaseAndDeploymentPinGates(t *testing.T) {
+	require.ErrorIs(t, checkVersion("0.99.0", "SDK"), sandbox.ErrUnsupported)
+	_, err := New(Options{})
+	require.ErrorIs(t, err, sandbox.ErrUnsupported)
+	_, err = New(Options{ExecdImage: "opensandbox/execd:latest", Connection: sdk.ConnectionConfig{UseServerProxy: true}})
+	require.ErrorIs(t, err, sandbox.ErrUnsupported)
 }

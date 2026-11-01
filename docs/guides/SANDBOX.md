@@ -22,6 +22,8 @@
 
 首期验证组合为 **Docker OpenSandbox server/execd release-1.2.0 + Go SDK v1.2.0**。SDK 模块声明仍为 `github.com/alibaba/OpenSandbox/sdks/sandbox/go`。供应商地址和密钥由宿主提供，不放入模型工具参数或 preset 配置。
 
+Provider 构造时核对 SDK 的版本常量；Create/Connect 在访问实例前查询控制服务 `/version`，只接受 1.2.0，版本不符不分配。宿主必须显式设置 `Options.ExecdImage=opensandbox.SupportedExecdImage` 并实际固定控制服务的 execd_image；错误或缺失的 pin 会被拒绝。execd 的 Ping 只有就绪信息，没有构建版本，不能用 Ping 证明镜像版本。这个 pin 是可信宿主的部署声明，服务端实际配置仍须由部署者核对。
+
 沙盒镜像需要 Linux、POSIX 文件能力、`python3` 和 `sleep infinity`。创建时会实际运行文件辅助程序；缺少运行时会失败，Registry 保留已分配资源的清理责任。工作区默认 `/workspace/goagent`，可由宿主 `Options.Root` 修改。初始化不自动上传宿主项目；通过远端 FileSystem 写入输入、读取产物。
 
 本适配器要求 `Connection.UseServerProxy=true`，数据端点必须与控制服务同源，HTTP 重定向关闭。服务必须由宿主按 Docker 后端部署；适配器不把一个地址自动证明为可信隔离环境。首期仅支持 `Network:true`，`false` 在分配前返回 `sandbox.ErrUnsupported`。不包含已经验证的出站阻断、Kubernetes 或微虚机后端。
@@ -36,7 +38,7 @@
 TASK_WORK=$(mktemp -d)
 TASK_REPO=$(pwd)
 (cd "$TASK_WORK" && GOWORK=off go work init "$TASK_REPO" "$TASK_REPO/sandbox/opensandbox")
-GOWORK="$TASK_WORK/go.work" go work edit -replace=github.com/kart-io/goagent-harness@v0.0.0-20261101021826-231f713ad219="$TASK_REPO"
+GOWORK="$TASK_WORK/go.work" go work edit -replace=github.com/kart-io/goagent-harness@v0.0.0-20261101024650-5e7d5be73849="$TASK_REPO"
 export GOWORK="$TASK_WORK/go.work"
 (cd sandbox/opensandbox && go test -race ./...)
 ```
@@ -68,6 +70,8 @@ python3 scripts/verify-sandbox.py --output /tmp/harness-sandbox-results
 
 ```go
 provider, err := opensandbox.New(opensandbox.Options{
+    // 宿主已将 Docker 控制服务的 execd_image 固定为此 digest。
+    ExecdImage: opensandbox.SupportedExecdImage,
     Connection: sdk.ConnectionConfig{
         Domain: domain, Protocol: "https", APIKey: key,
         UseServerProxy: true,
@@ -145,6 +149,6 @@ TTL 默认 10 分钟。本适配器不自动续期；需要更长任务时在宿
 
 默认上限：操作 30 秒、启动 120 秒、清理 5 秒、命令输出 1MiB、RPC 响应 8MiB、单文件 4MiB、Walk 10000 个条目（包含起点）。宿主可在 Options 设置；coding 工具还有自身输出/文件限制，实际采用较严格边界。超出命令输出上限会中断命令并返回 error，不是无限运行后截断。
 
-FS 请求通过临时文件上传，避免 Linux 单个 argv 长度限制。辅助程序使用目录 fd/no-follow 限制路径，内部链接可解析，外部链接被拒绝，Walk 不跟随链接，Remove 删除链接本身。每次操作重新检查路径；Walk 在并发变化下不是快照。
+FS 请求通过临时文件上传，避免 Linux 单个 argv 长度限制。辅助程序使用目录 fd/no-follow 限制路径，内部链接可解析，外部链接被拒绝，Walk 不跟随链接，Remove 删除链接本身。每次操作重新检查路径；Walk 在并发变化下不是快照。WriteFile/Remove 要求规范的变更路径，内部别名应先通过 Resolve 转为实际路径；变更前发生别名重定向会拒绝。coding 在 Observed/Checkpointed 下面重新检查 `.git`，并通过可选 `sandbox.MutationProtector` 将保护规则传入支持的后端，OpenSandbox 在实际辅助程序变更边界再检查，覆盖中间解析后的规范路径。Session 保留此能力且不绕过生命周期；不支持的后端不会被虚报为支持。命令仍可按已审批权限运行 Git，本规则保护 FileSystem 变更。
 
 条件写的锁只协调辅助程序写者。直接命令、外部编辑器或有权限的恶意进程可绕过锁；不承诺对这些写者的 CAS。写入原子替换后 fsync 失败或调用取消时，文件可能已经改变，需重新读取确认。命令的工作目录在根内，但命令可读写沙盒内其他路径；工作区文件接口边界不等于容器内命令文件权限。进程停止确认不承诺所有脱离进程组的子进程消失，owned 实例最终整体销毁。

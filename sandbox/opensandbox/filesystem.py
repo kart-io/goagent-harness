@@ -46,6 +46,16 @@ def execute(q):
  if op=='init':
   fd=directory(os.fsencode(root).split(b'/'),q.get('create',False));os.close(fd);return {}
  r=rooted(dec(q.get('path')),op not in ('remove','entry'))
+ if op in ('write','remove'):
+  # A caller authorizes a canonical mutation path. Never silently retarget it
+  # after an alias changes between Resolve and the final no-follow operation.
+  raw=dec(q.get('path'));rb=os.fsencode(root)
+  lexical=os.path.relpath(os.path.normpath(raw if os.path.isabs(raw) else os.path.join(rb,raw)),rb)
+  if lexical!=r: raise Failure('invalid')
+  protected=q.get('protected_names',[])
+  if any(not isinstance(n,str) or not n or '/' in n or n in ('.','..') for n in protected): raise Failure('invalid')
+  if any(os.fsencode(n) in r.split(b'/') for n in protected): raise Failure('permission')
+
  if op=='resolve':
   # Missing ancestors are valid for a future WriteFile; actual writes
   # repeat the no-follow traversal before touching the target.

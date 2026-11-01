@@ -22,6 +22,7 @@ var (
 )
 
 type fileRequest struct {
+	ProtectedNames []string    `json:"protected_names,omitempty"`
 	Op             string      `json:"op"`
 	Path           []byte      `json:"path,omitempty"`
 	Data           []byte      `json:"data,omitempty"`
@@ -51,20 +52,22 @@ type fileReply struct {
 	More      bool        `json:"more"`
 }
 type fileSystem struct {
-	root       string
-	maxFile    int64
-	maxEntries int
-	call       func(context.Context, fileRequest) ([]byte, error)
+	protectedNames []string
+	root           string
+	maxFile        int64
+	maxEntries     int
+	call           func(context.Context, fileRequest) ([]byte, error)
 }
 
 func newFileSystem(root string, maxFile int64, maxEntries int, call func(context.Context, fileRequest) ([]byte, error)) *fileSystem {
-	return &fileSystem{root, maxFile, maxEntries, call}
+	return &fileSystem{root: root, maxFile: maxFile, maxEntries: maxEntries, call: call}
 }
 func (f *fileSystem) request(ctx context.Context, q fileRequest) (fileReply, error) {
 	var r fileReply
 	if err := ctx.Err(); err != nil {
 		return r, err
 	}
+	q.ProtectedNames = append([]string(nil), f.protectedNames...)
 	raw, err := f.call(ctx, q)
 	if err != nil {
 		return r, err
@@ -243,4 +246,10 @@ func (f *fileSystem) Walk(ctx context.Context, p string, fn func(env.Info) error
 		return nil
 	}
 	return e
+}
+
+func (f *fileSystem) WithProtectedNames(names ...string) env.FileSystem {
+	copy := *f
+	copy.protectedNames = append(append([]string(nil), f.protectedNames...), names...)
+	return &copy
 }

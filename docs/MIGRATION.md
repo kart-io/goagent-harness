@@ -16,10 +16,10 @@ Builder、Runnable、Graph、durable、budget、observe、Dispatcher/Pipeline、
 
 ## 依赖与验证
 
-新模块依赖已发布的 GoAgent v0.23.0，包含 Preset 所需循环扩展点。后续独立版本发布须更新明确的 GoAgent 版本并分别运行 `GOWORK=off go test ./...` 和本地跨仓验证脚本。
+当前模块依赖已发布的 GoAgent v0.32.2，包含 Preset 所需循环扩展点与当前执行环境接口；最初拆分基线为 v0.23.0。后续独立版本发布须更新明确的 GoAgent 版本并分别运行 `GOWORK=off go test ./...` 和本地跨仓验证脚本。
 源码已迁至 `github.com/kart-io/goagent-harness` 的 `main` 分支，尚未发布版本标签。不在 go.mod 中写入本地 replace；需要稳定版本的使用方应等待正式标签。
 
-GoAgent 当前 checkout 还包含 v0.23.0 之后的 LocalFS 修复；本地 workspace 验证该实现，发布依赖验证基线版本，二者的文件系统保证应分别以对应代码为准。
+发布依赖与本地 checkout 均需分别验证，文件系统保证以各自具体代码为准。Sandbox 供应商适配器为独立可选模块，其临时 workspace 和单独验收命令见 [Sandbox 指南](guides/SANDBOX.md)。
 
 ## 示例与设计
 

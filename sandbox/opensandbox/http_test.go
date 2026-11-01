@@ -48,6 +48,10 @@ func TestUnknownCreateRemainsReconciliableWithoutID(t *testing.T) {
 	// the server has nevertheless recorded the exact owner token.
 	p := providerFixture(t, state).(*provider)
 	broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/version" {
+			_, _ = io.WriteString(w, `{"version":"1.2.0"}`)
+			return
+		}
 		if r.Method == "POST" {
 			state.mu.Lock()
 			defer state.mu.Unlock()

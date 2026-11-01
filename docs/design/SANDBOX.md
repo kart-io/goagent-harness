@@ -1,6 +1,6 @@
 # Sandbox 接入设计与功能契约
 
-状态：实现与验证中。2026-11-01。Harness使用GoAgent v0.32.2；不修改GoAgent执行内核。首个可选后端为OpenSandbox，固定release-1.2.0（62a64f0b48cdd6b410f36e53c74dc7559c87719a），server/SDK/execd成套验证。
+状态：已实现，最终验证见验收报告。2026-11-01。Harness使用GoAgent v0.32.2；不修改GoAgent执行内核。首个可选后端为OpenSandbox，固定release-1.2.0（62a64f0b48cdd6b410f36e53c74dc7559c87719a），server/SDK/execd成套验证。
 
 ## 职责与功能
 
@@ -52,7 +52,9 @@ config:
 - 首期明确支持已验证的Docker服务后端、Linux沙盒镜像。镜像须有python3和sleep infinity，初始化实际探测，缺少即失败。已有server镜像中python3可用于本地验证；业务镜像由宿主指定。
 - 工作区默认/workspace/goagent，根目录由可信Provider配置指定；不自动上传本地项目。文件上传可用FS，产物由调用者读回。
 - 首期只支持网络可用配置；network=false在创建前明确拒绝，不声明未经验证的出站阻断。网络策略/微VM/Kubernetes支持需单独验收。
-- Create设置TTL（默认10分钟）和可信版本/Scope元数据（Root/Scope/Image使用无padding base32 SHA256以适配63字符标签，实际镜像额外核对）；Connect核对元数据与配置，不将任意外部沙盒伪装为本适配器实例。
+- 构造时核对SDK版本常量，Create/Connect预分配查询server /version并限定1.2.0。Options.ExecdImage必须显式声明固定SupportedExecdImage digest，宿主负责控制服务实际配置；Ping不提供execd构建版本，不能作为版本证明。
+
+Create设置TTL（默认10分钟）和可信版本/Scope元数据（Root/Scope/Image使用无padding base32 SHA256以适配63字符标签，实际镜像额外核对）；Connect核对元数据与配置，不将任意外部沙盒伪装为本适配器实例。
 - Native Argv不拼接shell；Dir必须在工作区。使用异步命令ID及状态/日志接口，非零退出码返回Result,nil；启动/传输/取消失败返回error。
 - 命令输出有上限，RPC响应也有边界。达到上限或context取消时使用独立清理context发送Interrupt，并查询停止状态；不能确认时返回带sandbox/command身份的可识别未确认错误，不自动重新执行。
 - 进程状态验证不承诺逃离进程组的所有后代都被清理；owned实例在最终关闭时销毁，borrowed实例由其所有者管理。
@@ -61,7 +63,7 @@ config:
 
 通过固定嵌入的python3辅助程序在同一沙盒内执行文件操作，参数经Argv/JSON传递，不插入shell脚本。提供Resolve/Stat/ReadFile/WriteFile/Remove/Walk，内容Version使用SHA-256。文件、遍历结果和RPC有独立大小上限。
 
-路径先规范并限定在配置根内；操作使用目录fd和O_NOFOLLOW遍历，拒绝危险链接/替换。Resolve可解析指向工作区内部的符号链接，拒绝越界；Walk按词法顺序且不跟随符号链接，Go侧保留fs.SkipDir/SkipAll语义。Remove删除链接本身，不跟随目标。
+路径先规范并限定在配置根内；操作使用目录fd和O_NOFOLLOW遍历，拒绝危险链接/替换。Resolve可解析指向工作区内部的符号链接，拒绝越界；Walk按词法顺序且不跟随符号链接，Go侧保留fs.SkipDir/SkipAll语义。Remove删除链接本身，不跟随目标。变更路径须规范，内部别名先Resolve，变更前的重定向拒绝。可选MutationProtector返回带排除条目名规则的FileSystem视图；Session仅在底层支持时保留能力，coding在Checkpointed/Observed下面校验.git并向OpenSandbox传入最终变更规则，避免多次Resolve把授权路径转成受保护目标。
 
 WriteIntent.CreateIfAbsent/IfVersion与写入通过沙盒内flock协调所有辅助程序写者，原子替换、fsync并返回内容版本；空IfVersion不构成条件。协调仅覆盖遵守协议的辅助程序操作，不覆盖任意命令或外部编辑器直接写入，不声称跨任意写者CAS。路径竞态、不支持类型、超限和持久化确认失败必须明确返回，不能伪报成功。取消/中断时可能已发生写入，应重新读取确认。
 

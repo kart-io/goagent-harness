@@ -13,6 +13,9 @@ import (
 
 	sdk "github.com/alibaba/OpenSandbox/sdks/sandbox/go"
 	"github.com/kart-io/goagent-harness/sandbox"
+	"github.com/kart-io/goagent-harness/tools/coding"
+	"github.com/kart-io/goagent/harness/env"
+	"github.com/kart-io/goagent/interfaces"
 	"github.com/stretchr/testify/require"
 )
 
@@ -115,4 +118,43 @@ func TestOutputLimitStopsActualCommand(t *testing.T) {
 	defer state.mu.Unlock()
 	require.Equal(t, 1, state.interrupts)
 	require.False(t, state.running)
+}
+
+func TestReviewHTTP408IsUnknownCommandOutcome(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(408)
+		_, _ = fmt.Fprint(w, `{"code":"timeout","message":"upstream response timeout"}`)
+	}))
+	defer server.Close()
+	runner := &commandRunner{sandboxID: "s", client: sdk.NewExecdClient(server.URL, ""), poll: time.Millisecond, cleanupTimeout: time.Millisecond, requestTimeout: time.Second}
+	_, err := runner.run(context.Background(), []string{"touch", "side-effect"}, "/workspace", 1024)
+	require.ErrorIs(t, err, sandbox.ErrUnconfirmed)
+}
+
+func TestCodingAdapterFailedInterruptPreservesIdentity(t *testing.T) {
+	state := &commandServer{running: true, ignoreInterrupt: true}
+	runner := runnerFixture(t, state)
+	files, _ := localFilesystem(t, 1024, 100)
+	e := &environment{provider: &provider{options: Options{OperationTimeout: time.Second, MaxOutputBytes: 1024}}, runner: runner, files: files}
+	w, err := coding.New(files, e, coding.WithCommandTimeout(200*time.Millisecond))
+	require.NoError(t, err)
+	for _, tool := range w.Tools() {
+		if tool.Name() == "run_command" {
+			out, err := tool.Invoke(context.Background(), &interfaces.ToolInput{Args: map[string]interface{}{"command": "sleep 60"}})
+			require.ErrorIs(t, err, sandbox.ErrUnconfirmed)
+			require.NotNil(t, out)
+			require.False(t, out.Success)
+			var uncertain *sandbox.UnconfirmedError
+			require.ErrorAs(t, err, &uncertain)
+			require.Equal(t, "command-1", uncertain.CommandID)
+		}
+	}
+	require.ErrorIs(t, e.check(), sandbox.ErrUnconfirmed)
+	_, err = e.Run(context.Background(), env.Command{Argv: []string{"touch", "another"}})
+	require.ErrorIs(t, err, sandbox.ErrUnconfirmed)
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	require.Equal(t, 1, state.starts)
+	require.True(t, state.running)
 }

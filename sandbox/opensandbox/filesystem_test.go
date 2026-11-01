@@ -1,6 +1,11 @@
 package opensandbox
 
 import (
+	"github.com/kart-io/goagent-harness/sandbox"
+	"github.com/kart-io/goagent-harness/tools/coding"
+	"github.com/kart-io/goagent/interfaces"
+	"time"
+
 	"context"
 	"encoding/json"
 	"errors"
@@ -181,4 +186,73 @@ func TestResolveAllowsNewNestedFileWithoutCreatingDirectories(t *testing.T) {
 	require.Equal(t, "new/nested/file", relative)
 	_, err = os.Stat(filepath.Join(root, "new"))
 	require.ErrorIs(t, err, fs.ErrNotExist)
+}
+
+type reviewUnknownExecutor struct{}
+
+func (reviewUnknownExecutor) Capabilities() env.Capabilities { return env.Capabilities{} }
+func (reviewUnknownExecutor) Run(ctx context.Context, _ env.Command) (env.Result, error) {
+	<-ctx.Done()
+	return env.Result{}, &sandbox.UnconfirmedError{SandboxID: "remote", CommandID: "still-running", Cause: ctx.Err()}
+}
+func TestReviewCodingMustPreserveUnconfirmedTimeout(t *testing.T) {
+	f, _ := localFilesystem(t, 1024, 100)
+	w, err := coding.New(f, reviewUnknownExecutor{}, coding.WithCommandTimeout(time.Millisecond))
+	require.NoError(t, err)
+	for _, tool := range w.Tools() {
+		if tool.Name() == "run_command" {
+			out, err := tool.Invoke(context.Background(), &interfaces.ToolInput{Args: map[string]interface{}{"command": "sleep 60"}})
+			require.ErrorIs(t, err, sandbox.ErrUnconfirmed)
+			require.NotNil(t, out)
+			require.False(t, out.Success)
+		}
+	}
+}
+
+func TestReviewCodingRejectsLinkSwapBeforeMutation(t *testing.T) {
+	for _, stage := range []string{"resolve-1", "resolve-2", "resolve-3", "resolve-4", "write"} {
+		t.Run(stage, func(t *testing.T) {
+			f, root := localFilesystem(t, 1024, 100)
+			require.NoError(t, os.Mkdir(filepath.Join(root, ".git"), 0700))
+			for _, name := range []string{"safe", ".git/config"} {
+				require.NoError(t, os.WriteFile(filepath.Join(root, name), []byte("old"), 0600))
+			}
+			original := f.call
+			armed, swapped := false, false
+			resolves := 0
+			f.call = func(ctx context.Context, q fileRequest) ([]byte, error) {
+				if armed && q.Op == "resolve" {
+					resolves++
+				}
+				if armed && !swapped && ((q.Op == "write" && stage == "write") || (q.Op == "resolve" && stage == fmt.Sprintf("resolve-%d", resolves))) {
+					require.NoError(t, os.Remove(filepath.Join(root, "safe")))
+					require.NoError(t, os.Symlink(".git/config", filepath.Join(root, "safe")))
+					swapped = true
+				}
+				return original(ctx, q)
+			}
+			w, err := coding.New(f, env.LocalExecutor{Root: root})
+			require.NoError(t, err)
+			for _, tool := range w.Tools() {
+				if tool.Name() == "read_file" {
+					for _, name := range []string{"safe", ".git/config"} {
+						out, err := tool.Invoke(context.Background(), &interfaces.ToolInput{Args: map[string]interface{}{"path": name}})
+						require.NoError(t, err)
+						require.True(t, out.Success)
+					}
+				}
+			}
+			armed = true
+			for _, tool := range w.Tools() {
+				if tool.Name() == "write_file" {
+					out, err := tool.Invoke(context.Background(), &interfaces.ToolInput{Args: map[string]interface{}{"path": "safe", "content": "malicious config"}})
+					require.True(t, err != nil || !out.Success, "must reject retargeted mutation")
+				}
+			}
+			require.True(t, swapped, "must exercise the replacement")
+			actual, err := os.ReadFile(filepath.Join(root, ".git", "config"))
+			require.NoError(t, err)
+			require.Equal(t, "old", string(actual))
+		})
+	}
 }

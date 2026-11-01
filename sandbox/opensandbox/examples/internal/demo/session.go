@@ -17,7 +17,7 @@ func Run(use func(context.Context, *sandbox.Session) error) (err error) {
 	if domain == "" || image == "" {
 		return errors.New("HARNESS_SANDBOX_DOMAIN and HARNESS_SANDBOX_IMAGE required")
 	}
-	p, err := opensandbox.New(opensandbox.Options{Connection: sdk.ConnectionConfig{Domain: domain, Protocol: "http", APIKey: os.Getenv("HARNESS_SANDBOX_API_KEY"), UseServerProxy: true}})
+	p, err := opensandbox.New(opensandbox.Options{ExecdImage: opensandbox.SupportedExecdImage, Connection: sdk.ConnectionConfig{Domain: domain, Protocol: "http", APIKey: os.Getenv("HARNESS_SANDBOX_API_KEY"), UseServerProxy: true}})
 	if err != nil {
 		return err
 	}

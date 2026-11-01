@@ -68,7 +68,7 @@ func (r *commandRunner) run(ctx context.Context, argv []string, dir string, max 
 	if err != nil {
 		var rejected commandRejected
 		var apiError *sdk.APIError
-		if id == "" && (errors.As(err, &rejected) || (errors.As(err, &apiError) && apiError.StatusCode >= 400 && apiError.StatusCode < 500)) {
+		if id == "" && (errors.As(err, &rejected) || (errors.As(err, &apiError) && apiError.StatusCode >= 400 && apiError.StatusCode < 500 && apiError.StatusCode != 408)) {
 			return result, err
 		}
 		return abort(err)
