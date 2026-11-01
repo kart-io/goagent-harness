@@ -1,0 +1,46 @@
+--- FAIL: TestReviewGrandchildCannotLoseAncestorCeilings (0.00s)
+    sandbox_test.go:203: 
+        	Error Trace:	/Users/costalong/.codex/worktrees/goagent-harness-sandbox/preset/sandbox_test.go:203
+        	Error:      	An error is expected but got nil.
+        	Test:       	TestReviewGrandchildCannotLoseAncestorCeilings
+        	Messages:   	read-only/offline ancestor must reject writable/online grandchild
+FAIL
+FAIL	github.com/kart-io/goagent-harness/preset	0.832s
+--- FAIL: TestReviewHTTP408IsUnknownCommandOutcome (0.00s)
+    executor_test.go:129: 
+        	Error Trace:	/Users/costalong/.codex/worktrees/goagent-harness-sandbox/sandbox/opensandbox/executor_test.go:129
+        	Error:      	Target error should be in err chain:
+        	            	expected: "sandbox operation outcome is unconfirmed"
+        	            	in chain: "timeout: upstream response timeout"
+        	Test:       	TestReviewHTTP408IsUnknownCommandOutcome
+--- FAIL: TestReviewCodingMustPreserveUnconfirmedTimeout (0.03s)
+    filesystem_test.go:205: 
+        	Error Trace:	/Users/costalong/.codex/worktrees/goagent-harness-sandbox/sandbox/opensandbox/filesystem_test.go:205
+        	Error:      	Should be true
+        	Test:       	TestReviewCodingMustPreserveUnconfirmedTimeout
+        	Messages:   	unconfirmed stop must not be successful timed_out: &{Result:map[duration:1ms exit_code:-1 output: timed_out:true truncated:false] Success:true Error: Metadata:map[] AdditionalContext:[] Labels:map[]}
+--- FAIL: TestReviewCodingRejectsLinkSwapBeforeMutation (0.33s)
+    filesystem_test.go:234: write result: &{Result:map[bytes:16 created:false path:safe] Success:true Error: Metadata:map[] AdditionalContext:[] Labels:map[]} error: <nil>
+    filesystem_test.go:239: 
+        	Error Trace:	/Users/costalong/.codex/worktrees/goagent-harness-sandbox/sandbox/opensandbox/filesystem_test.go:239
+        	Error:      	Not equal: 
+        	            	expected: "old"
+        	            	actual  : "malicious config"
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-old
+        	            	+malicious config
+        	Test:       	TestReviewCodingRejectsLinkSwapBeforeMutation
+        	Messages:   	symlink replacement must not bypass coding .git guard
+--- FAIL: TestReviewRejectsWrongDeployedServerVersion (0.01s)
+    provider_test.go:156: 
+        	Error Trace:	/Users/costalong/.codex/worktrees/goagent-harness-sandbox/sandbox/opensandbox/provider_test.go:156
+        	Error:      	An error is expected but got nil.
+        	Test:       	TestReviewRejectsWrongDeployedServerVersion
+        	Messages:   	unsupported deployed release must fail during assembly
+FAIL
+FAIL	github.com/kart-io/goagent-harness/sandbox/opensandbox	1.666s
+FAIL

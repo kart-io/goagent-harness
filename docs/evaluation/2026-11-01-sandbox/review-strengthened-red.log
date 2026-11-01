@@ -1,0 +1,28 @@
+--- FAIL: TestReviewGrandchildCannotLoseAncestorCeilings (0.01s)
+    --- FAIL: TestReviewGrandchildCannotLoseAncestorCeilings/sandbox (0.00s)
+        sandbox_test.go:210: 
+            	Error Trace:	/Users/costalong/.codex/worktrees/goagent-harness-sandbox/preset/sandbox_test.go:210
+            	Error:      	An error is expected but got nil.
+            	Test:       	TestReviewGrandchildCannotLoseAncestorCeilings/sandbox
+    --- FAIL: TestReviewGrandchildCannotLoseAncestorCeilings/network (0.00s)
+        sandbox_test.go:210: 
+            	Error Trace:	/Users/costalong/.codex/worktrees/goagent-harness-sandbox/preset/sandbox_test.go:210
+            	Error:      	An error is expected but got nil.
+            	Test:       	TestReviewGrandchildCannotLoseAncestorCeilings/network
+FAIL
+FAIL	github.com/kart-io/goagent-harness/preset	0.582s
+--- FAIL: TestCodingAdapterFailedInterruptPreservesIdentity (0.26s)
+    executor_test.go:145: 
+        	Error Trace:	/Users/costalong/.codex/worktrees/goagent-harness-sandbox/sandbox/opensandbox/executor_test.go:145
+        	Error:      	Expected error with "sandbox operation outcome is unconfirmed" in chain but got nil.
+        	Test:       	TestCodingAdapterFailedInterruptPreservesIdentity
+--- FAIL: TestReviewCodingRejectsLinkSwapBeforeMutation (0.45s)
+    --- FAIL: TestReviewCodingRejectsLinkSwapBeforeMutation/resolve-3 (0.45s)
+        filesystem_test.go:249: 
+            	Error Trace:	/Users/costalong/.codex/worktrees/goagent-harness-sandbox/sandbox/opensandbox/filesystem_test.go:249
+            	Error:      	Should be true
+            	Test:       	TestReviewCodingRejectsLinkSwapBeforeMutation/resolve-3
+            	Messages:   	must reject retargeted mutation
+FAIL
+FAIL	github.com/kart-io/goagent-harness/sandbox/opensandbox	1.761s
+FAIL

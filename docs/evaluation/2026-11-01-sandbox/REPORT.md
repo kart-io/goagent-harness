@@ -27,7 +27,7 @@
 
 根模块：`GOWORK=off go test -race -count=1 ./...`、`go vet ./...`、golangci-lint v2.6.2 `run --no-config ./...` 均通过。可选模块：临时 workspace 下完整 `go test -race -count=1 ./...`（包括案例编译）、`go vet ./...`、相同 lint 均通过。根依赖不含 OpenSandbox SDK；嵌套模块需要单独验收。原始 race 输出见 [root-race.log](root-race.log)、[adapter-race.log](adapter-race.log)。
 
-`python3 scripts/verify-sandbox.py --output /tmp/harness-sandbox-acceptance3`：
+`python3 scripts/verify-sandbox.py --output /tmp/harness-sandbox-final-reviewed`：
 
 1. 原生 SDK HTTP 与真实 Docker：创建、就绪、文件/命令一致、超过单参数限制的大二进制文件、条件冲突、特殊 Argv、非零退出、链接越界、取消后实际 PID 消失、输出上限中断、断开与重连、独立环境均通过。
 2. 完整 preset.Load → Build → Dispatcher 的远端 write_file/read_file 通过。模板包含 permissions/base=coding，命令仍要求宿主审批。
@@ -56,4 +56,8 @@
 
 ## 最终独立审阅
 
-待执行一次全分支独立审阅；发现、裁定和复验结果在此更新。过程 ledger 在结束前归档。
+已完成一次 fresh-context 独立审阅：五项 Important，经一次 RED→GREEN 修复全部关闭；没有 Critical 或延期 Minor，也没有派发二次审阅。详见 [审阅与处理](REVIEW.md)、[执行ledger](EXECUTION_LEDGER.md)。修复后完整根/子模块race、vet、lint、跨仓脚本、真实Docker与两个案例重新通过。真实测试用时7.793秒；三个测试容器独立确认不存在。
+
+新增版本门禁：SDK.Version构造时限定1.2.0，server /version在Create/Connect前核对，execd要求显式可信部署digest pin，宿主负责实际配置。新增Harness-only MutationProtector以保持编码工具最终变更保护，Session不虚报底层未支持的能力。最终组合race见 [combined-race.log](combined-race.log)，跨仓验证见 [local-core.log](local-core.log)。
+
+本轮全部14项裁定与代价记录在ledger；保留分支和独立工作树，完成本地提交，不推送或合并。
