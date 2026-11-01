@@ -20,7 +20,7 @@
 
 Registry由宿主注入preset.Host，按Provider名选择实现。Request包含Scope、Image、Network；Scope由装配路径产生，Registry增加宿主Namespace。默认每次创建独立实例；宿主Resolver可为同Scope恢复提供已有ID与Retain选项。沙盒ID不由模型/YAML指定。
 
-Registry返回受管Session：新建实例默认owned，Close先关闭准入并取消活动操作，等待操作实际返回，再Destroy并Close；连接已有实例为borrowed，仅Close；显式Retain可保留新建实例以便恢复。Close有context并可在超时后重试，不以一次超时永久标记资源已回收。Backend方法必须遵守context；无法强停任意不配合的Go实现。
+Registry同时跟踪尚未返回的Open和所有未关闭Session，提供可重试Close供宿主在装配失败后统一回收。远端FS需实现ContextResolver以让无context参数的Resolve参与取消。Registry返回受管Session：新建实例默认owned，Close先关闭准入并取消活动操作，等待操作实际返回，再Destroy并Close；连接已有实例为borrowed，仅Close；显式Retain可保留新建实例以便恢复。Close有context并可在超时后重试，不以一次超时永久标记资源已回收。Backend方法必须遵守context；无法强停任意不配合的Go实现。
 
 Session包裹Executor与FileSystem。操作使用调用context与会话生命周期共同控制，关闭后新操作拒绝；取消FileSystem操作同样纳管。Resolve虽没有context参数，仍受会话生命周期及后端操作期限约束。
 
@@ -30,7 +30,7 @@ Registry.Open即使在Create迟到或验证失败时也保留非空会话的清�
 
 ```yaml
 use: workspace
-with:
+config:
   executor: sandbox
   provider: opensandbox
   image: your-python3-image

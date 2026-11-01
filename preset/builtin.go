@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kart-io/goagent-harness/tools/coding"
 	"github.com/kart-io/goagent/harness/env"
 	"github.com/kart-io/goagent/interfaces"
-	"github.com/kart-io/goagent-harness/tools/coding"
 	"github.com/kart-io/goagent/tools/policy"
 	"github.com/kart-io/goagent/tools/spill"
 )
@@ -99,8 +99,10 @@ var instructionsSpec = Spec[InstructionsConfig]{
 type WorkspaceConfig struct {
 	// Sandbox 默认 workspace-write。
 	Sandbox Sandbox `yaml:"sandbox"`
-	// Executor 为 docker（默认）或 local。
+	// Executor 为 docker（默认）、local 或 sandbox。
 	Executor string `yaml:"executor"`
+	// Provider is a trusted Host.Sandboxes key, only for executor=sandbox.
+	Provider string `yaml:"provider" json:",omitempty"`
 	// Image 是 docker 执行器的镜像。
 	Image string `yaml:"image"`
 	// Network 表示命令可以联网；执行器的实际能力须与之一致。
@@ -131,15 +133,25 @@ var workspaceSpec = Spec[WorkspaceConfig]{
 		}
 		switch c.Executor {
 		case "docker":
+			if c.Provider != "" {
+				return errors.New("docker 不使用 provider")
+			}
 			if c.Image == "" {
 				return errors.New("docker 执行器需要 image")
 			}
 		case "local":
+			if c.Provider != "" {
+				return errors.New("local 不使用 provider")
+			}
 			if c.Image != "" {
 				return errors.New("local 执行器不使用 image")
 			}
+		case "sandbox":
+			if strings.TrimSpace(c.Provider) == "" || strings.ContainsAny(c.Provider, "/: \t\n") || c.Image == "" {
+				return errors.New("sandbox 需要命名 provider 和 image")
+			}
 		default:
-			return fmt.Errorf("executor %q 无效，可选 docker、local", c.Executor)
+			return fmt.Errorf("executor %q 无效，可选 docker、local、sandbox", c.Executor)
 		}
 		if c.CommandTimeout < 0 || c.MaxOutputBytes < 0 {
 			return errors.New("commandTimeout 与 maxOutputBytes 不能为负")
@@ -152,40 +164,70 @@ var workspaceSpec = Spec[WorkspaceConfig]{
 		return nil
 	},
 	Needs: func(c *WorkspaceConfig) Needs {
-		return Needs{Sandbox: c.Sandbox, Executor: c.Executor, Image: c.Image, Network: c.Network}
+		executor := c.Executor
+		if executor == "sandbox" {
+			executor += ":" + c.Provider
+		}
+		return Needs{Sandbox: c.Sandbox, Executor: executor, Image: c.Image, Network: c.Network}
 	},
 	Build: buildWorkspace,
 }
 
-func buildWorkspace(_ context.Context, a *Assembler, c *WorkspaceConfig) error {
+func buildWorkspace(ctx context.Context, a *Assembler, c *WorkspaceConfig) error {
+	if parent := a.opts.parent; parent != nil {
+		if parent.sandbox != "" && c.Sandbox.rank() > parent.sandbox.rank() {
+			return fmt.Errorf("子 Agent 的沙箱模式 %s 宽于父 Agent 的 %s", c.Sandbox, parent.sandbox)
+		}
+		if parent.network != nil && !*parent.network && c.Network {
+			return errors.New("子 Agent 不得扩大父 Agent 的网络权限")
+		}
+	}
 	if a.Root() == "" {
 		return errors.New("Host.Root 未设置")
 	}
-	local, err := env.NewLocalFS(a.Root())
-	if err != nil {
-		return err
-	}
 	var executor env.Executor
-	switch c.Executor {
-	case "local":
-		executor = env.LocalExecutor{Root: local.Root()}
-	case "docker":
-		network := ""
-		if c.Network {
-			network = "bridge"
+	var fsys env.FileSystem
+	var root, sandboxID string
+	isolated := false
+	if c.Executor == "sandbox" {
+		session, err := prepareSandbox(ctx, a, c)
+		if err != nil {
+			return err
 		}
-		executor = env.DockerExecutor{Root: local.Root(), Image: c.Image, Network: network, ReadOnly: c.Sandbox == ReadOnly}
+		info := session.Info()
+		executor = session.Executor()
+		fsys = session.FileSystem()
+		root = info.Root
+		sandboxID = info.ID
+		isolated = info.Isolated
+	} else {
+		local, err := env.NewLocalFS(a.Root())
+		if err != nil {
+			return err
+		}
+		root = local.Root()
+		fsys = local
+		switch c.Executor {
+		case "local":
+			executor = env.LocalExecutor{Root: root}
+		case "docker":
+			network := ""
+			if c.Network {
+				network = "bridge"
+			}
+			executor = env.DockerExecutor{Root: root, Image: c.Image, Network: network, ReadOnly: c.Sandbox == ReadOnly}
+		}
+		isolated = executor.Capabilities().Container
 	}
 	caps := executor.Capabilities()
-	var fsys env.FileSystem = local
 	commands := true
 	switch c.Sandbox {
 	case ReadOnly:
-		fsys = env.ReadOnly(local)
+		fsys = env.ReadOnly(fsys)
 		commands = caps.ReadOnlyRoot
 	case WorkspaceWrite:
-		if !caps.Container {
-			return fmt.Errorf("沙箱模式 %s 要求在容器中执行命令，%s 执行器无法限制命令写入工作区之外；改用 docker 执行器或 %s", WorkspaceWrite, c.Executor, DangerFullAccess)
+		if !isolated {
+			return fmt.Errorf("沙箱模式 %s 要求在容器中执行命令或使用已验证的隔离后端，%s 执行器无法限制命令写入工作区之外；改用 docker 执行器或 %s", WorkspaceWrite, c.Executor, DangerFullAccess)
 		}
 	}
 	if commands && caps.Network != c.Network {
@@ -213,7 +255,7 @@ func buildWorkspace(_ context.Context, a *Assembler, c *WorkspaceConfig) error {
 	if err != nil {
 		return err
 	}
-	return a.SetWorkspace(w, WorkspaceInfo{Root: local.Root(), Sandbox: c.Sandbox, Executor: c.Executor, Image: c.Image, Network: c.Network, CommandsEnabled: commands})
+	return a.SetWorkspace(w, WorkspaceInfo{Provider: c.Provider, SandboxID: sandboxID, Root: root, Sandbox: c.Sandbox, Executor: c.Executor, Image: c.Image, Network: c.Network, CommandsEnabled: commands})
 }
 
 var (

@@ -13,17 +13,21 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/kart-io/goagent-harness/sandbox"
+	"github.com/kart-io/goagent-harness/tools/coding"
 	"github.com/kart-io/goagent/core/durable"
 	"github.com/kart-io/goagent/interfaces"
 	"github.com/kart-io/goagent/llm"
 	"github.com/kart-io/goagent/tools"
-	"github.com/kart-io/goagent-harness/tools/coding"
 	"github.com/kart-io/goagent/tools/policy"
 	"github.com/kart-io/goagent/tools/spill"
 )
 
 // Host 是宿主提供给 Build 的环境。模型、SessionID、持久化作用域与预算由宿主在 Builder 上配置。
 type Host struct {
+	// Sandboxes selects trusted providers and per-task instance bindings. The
+	// host closes this registry on task shutdown, including failed assemblies.
+	Sandboxes *sandbox.Registry
 	// Root 是工作区根目录，workspace 组件需要；也是信任授权的项目标识。
 	Root string
 	// Approver 处理 Ask；为 nil 时 Ask 的结果为 Unavailable，按拒绝处理。
@@ -44,6 +48,7 @@ type Host struct {
 
 // buildOptions 是作为子 Agent 装配时的约束。
 type buildOptions struct {
+	scope  []string
 	depth  int
 	parent *parentScope
 	filter *ToolFilter
@@ -51,6 +56,7 @@ type buildOptions struct {
 
 // parentScope 是父 Agent 的权限：子 Agent 的调用同样要经过父 Agent 的调用前钩子与守卫，权限因此不超过父 Agent。
 type parentScope struct {
+	network      *bool
 	pre          []tools.PreHook
 	guards       []tools.Guard
 	sandbox      Sandbox
@@ -59,11 +65,13 @@ type parentScope struct {
 
 // WorkspaceInfo 描述 workspace 组件创建的工作区及其沙箱。
 type WorkspaceInfo struct {
-	Root     string  `json:"root"`
-	Sandbox  Sandbox `json:"sandbox"`
-	Executor string  `json:"executor"`
-	Image    string  `json:"image,omitempty"`
-	Network  bool    `json:"network"`
+	Provider  string  `json:"provider,omitempty"`
+	SandboxID string  `json:"sandbox_id,omitempty"`
+	Root      string  `json:"root"`
+	Sandbox   Sandbox `json:"sandbox"`
+	Executor  string  `json:"executor"`
+	Image     string  `json:"image,omitempty"`
+	Network   bool    `json:"network"`
 	// CommandsEnabled 表示执行器能兑现沙箱模式，可以提供执行命令的工具。
 	CommandsEnabled bool `json:"commands_enabled"`
 }
@@ -227,6 +235,9 @@ func Build(ctx context.Context, p *Resolved, host Host) (*Assembly, error) {
 func build(ctx context.Context, p *Resolved, host Host, opts buildOptions) (asm *Assembly, err error) {
 	if p == nil {
 		return nil, errors.New("preset is required")
+	}
+	if len(opts.scope) == 0 {
+		opts.scope = []string{p.ID}
 	}
 	if host.Root != "" {
 		abs, err := filepath.Abs(host.Root)

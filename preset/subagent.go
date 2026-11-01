@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -91,14 +92,18 @@ func buildSubagent(ctx context.Context, a *Assembler, c *SubagentConfig) error {
 	a.AddTools(tool)
 	slot := a.cur
 	parentSandbox := Sandbox("")
+	var parentNetwork *bool
 	a.AfterPublish(func(parent *tools.Pipeline) error {
 		if a.workspace != nil {
 			parentSandbox = a.workspaceInfo.Sandbox
+			network := a.workspaceInfo.Network
+			parentNetwork = &network
 		}
 		filter := c.ToolFilter
 		child, err := build(ctx, target, a.host, buildOptions{
 			depth:  depth,
-			parent: &parentScope{pre: parent.Pre, guards: parent.Guards, sandbox: parentSandbox, denyApproval: a.denyApproval},
+			scope:  append(slices.Clone(a.opts.scope), a.preset.Rows[slot].ID, target.ID),
+			parent: &parentScope{network: parentNetwork, pre: parent.Pre, guards: parent.Guards, sandbox: parentSandbox, denyApproval: a.denyApproval},
 			filter: &filter,
 		})
 		if err != nil {
