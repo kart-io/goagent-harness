@@ -96,9 +96,15 @@ func buildSubagent(ctx context.Context, a *Assembler, c *SubagentConfig) error {
 			parentSandbox = a.workspaceInfo.Sandbox
 		}
 		filter := c.ToolFilter
-		child, err := build(ctx, target, a.host, buildOptions{
-			depth:  depth,
-			parent: &parentScope{pre: parent.Pre, guards: parent.Guards, sandbox: parentSandbox, denyApproval: a.denyApproval},
+		childHost := a.host
+		if childHost.AgentID == "" {
+			childHost.AgentID = a.preset.ID
+		}
+		childHost.AgentID += "/" + a.preset.Rows[slot].ID
+		child, err := build(ctx, target, childHost, buildOptions{
+			depth: depth,
+			parent: &parentScope{pre: parent.Pre, guards: parent.Guards, sandbox: parentSandbox, denyApproval: a.denyApproval,
+				policy: a.workspaceInfo.Policy, ceiling: a.workspaceInfo.Ceiling, controller: a.controller, envAllowlist: a.workspaceInfo.EnvAllowlist},
 			filter: &filter,
 		})
 		if err != nil {

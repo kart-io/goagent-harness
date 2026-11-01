@@ -126,10 +126,13 @@ func TestClaudeCodeLoopHooks(t *testing.T) {
 	require.Equal(t, "终稿", answer)
 	first := model.request(0)
 	require.Contains(t, first[0].Content, "会话说明：使用中文", "SessionStart output goes into system")
-	require.Equal(t, "写个函数\n\n额外上下文：当前分支 main", first[len(first)-1].Content)
+	require.True(t, slices.ContainsFunc(first, func(m llm.Message) bool {
+		return m.Role == "user" && m.Content == "写个函数\n\n额外上下文：当前分支 main"
+	}))
 	second := model.request(1)
-	require.Equal(t, "请补充测试说明", second[len(second)-1].Content, "Stop hook continues the turn")
-	require.Equal(t, "初稿", second[len(second)-2].Content)
+	stopIndex := slices.IndexFunc(second, func(m llm.Message) bool { return m.Role == "user" && m.Content == "请补充测试说明" })
+	require.Greater(t, stopIndex, 0, "Stop hook continues the turn before runtime facts are appended")
+	require.Equal(t, "初稿", second[stopIndex-1].Content)
 
 	// 轮次输入被阻止时不请求模型；同一会话不再执行 SessionStart。
 	answer, err = run(t, asm, model, "s1", "这里有 secret")

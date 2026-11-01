@@ -42,6 +42,8 @@ func fileError(resp *tools.ToolErrorResponse, rel string, err error) (*interface
 		return tools.Rejected(rel+" does not exist", nil), nil
 	case errors.Is(err, fs.ErrPermission):
 		return tools.Rejected("permission denied: "+rel, nil), nil
+	case errors.Is(err, env.ErrReadOnly):
+		return tools.Rejected("sandbox denies file modification in read-only mode", nil), nil
 	case errors.Is(err, errNotText):
 		return tools.Rejected(rel+": "+err.Error(), nil), nil
 	case errors.Is(err, env.ErrNotObserved):

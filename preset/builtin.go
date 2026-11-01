@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kart-io/goagent/harness/env"
-	"github.com/kart-io/goagent/interfaces"
+	"github.com/kart-io/goagent-harness/permissions"
 	"github.com/kart-io/goagent-harness/tools/coding"
+	"github.com/kart-io/goagent/interfaces"
 	"github.com/kart-io/goagent/tools/policy"
 	"github.com/kart-io/goagent/tools/spill"
 )
@@ -99,6 +99,12 @@ var instructionsSpec = Spec[InstructionsConfig]{
 type WorkspaceConfig struct {
 	// Sandbox 默认 workspace-write。
 	Sandbox Sandbox `yaml:"sandbox"`
+	// MaxSandbox is the highest mode a human may approve for one call. Defaults to Sandbox.
+	MaxSandbox Sandbox `yaml:"maxSandbox"`
+	// AdditionalWritableRoots are explicit physical host directories (trusted expansion).
+	AdditionalWritableRoots []string `yaml:"additionalWritableRoots"`
+	// EnvAllowlist permits named host environment variables in command subprocesses.
+	EnvAllowlist []string `yaml:"envAllowlist"`
 	// Executor 为 docker（默认）或 local。
 	Executor string `yaml:"executor"`
 	// Image 是 docker 执行器的镜像。
@@ -126,6 +132,22 @@ var workspaceSpec = Spec[WorkspaceConfig]{
 		if !c.Sandbox.valid() {
 			return fmt.Errorf("sandbox %q 无效", c.Sandbox)
 		}
+		if c.MaxSandbox == "" {
+			c.MaxSandbox = c.Sandbox
+		}
+		if !c.MaxSandbox.valid() || c.MaxSandbox.rank() < c.Sandbox.rank() {
+			return errors.New("maxSandbox must be a valid mode at least as wide as sandbox")
+		}
+		for _, root := range c.AdditionalWritableRoots {
+			if !filepath.IsAbs(root) {
+				return errors.New("additionalWritableRoots must be absolute physical directories")
+			}
+		}
+		for _, name := range c.EnvAllowlist {
+			if name == "" || strings.ContainsAny(name, "=\x00") {
+				return errors.New("envAllowlist contains invalid environment name")
+			}
+		}
 		if c.Executor == "" {
 			c.Executor = "docker"
 		}
@@ -134,12 +156,12 @@ var workspaceSpec = Spec[WorkspaceConfig]{
 			if c.Image == "" {
 				return errors.New("docker 执行器需要 image")
 			}
-		case "local":
+		case "local", "native":
 			if c.Image != "" {
 				return errors.New("local 执行器不使用 image")
 			}
 		default:
-			return fmt.Errorf("executor %q 无效，可选 docker、local", c.Executor)
+			return fmt.Errorf("executor %q 无效，可选 docker、local、native", c.Executor)
 		}
 		if c.CommandTimeout < 0 || c.MaxOutputBytes < 0 {
 			return errors.New("commandTimeout 与 maxOutputBytes 不能为负")
@@ -152,68 +174,16 @@ var workspaceSpec = Spec[WorkspaceConfig]{
 		return nil
 	},
 	Needs: func(c *WorkspaceConfig) Needs {
-		return Needs{Sandbox: c.Sandbox, Executor: c.Executor, Image: c.Image, Network: c.Network}
+		n := Needs{Sandbox: c.MaxSandbox, Executor: c.Executor, Image: c.Image, Network: c.Network}
+		for _, root := range c.AdditionalWritableRoots {
+			n.Grants = append(n.Grants, "额外可写目录 "+root)
+		}
+		for _, name := range c.EnvAllowlist {
+			n.Grants = append(n.Grants, "传递宿主环境变量 "+name)
+		}
+		return n
 	},
 	Build: buildWorkspace,
-}
-
-func buildWorkspace(_ context.Context, a *Assembler, c *WorkspaceConfig) error {
-	if a.Root() == "" {
-		return errors.New("Host.Root 未设置")
-	}
-	local, err := env.NewLocalFS(a.Root())
-	if err != nil {
-		return err
-	}
-	var executor env.Executor
-	switch c.Executor {
-	case "local":
-		executor = env.LocalExecutor{Root: local.Root()}
-	case "docker":
-		network := ""
-		if c.Network {
-			network = "bridge"
-		}
-		executor = env.DockerExecutor{Root: local.Root(), Image: c.Image, Network: network, ReadOnly: c.Sandbox == ReadOnly}
-	}
-	caps := executor.Capabilities()
-	var fsys env.FileSystem = local
-	commands := true
-	switch c.Sandbox {
-	case ReadOnly:
-		fsys = env.ReadOnly(local)
-		commands = caps.ReadOnlyRoot
-	case WorkspaceWrite:
-		if !caps.Container {
-			return fmt.Errorf("沙箱模式 %s 要求在容器中执行命令，%s 执行器无法限制命令写入工作区之外；改用 docker 执行器或 %s", WorkspaceWrite, c.Executor, DangerFullAccess)
-		}
-	}
-	if commands && caps.Network != c.Network {
-		return fmt.Errorf("%s 执行器的网络能力（%v）与配置 network: %v 不符", c.Executor, caps.Network, c.Network)
-	}
-	opts := []coding.Option{coding.WithExecutor(executor)}
-	if c.CommandTimeout > 0 {
-		opts = append(opts, coding.WithCommandTimeout(c.CommandTimeout))
-	}
-	if c.MaxOutputBytes > 0 {
-		opts = append(opts, coding.WithMaxOutputBytes(c.MaxOutputBytes))
-	}
-	if len(c.Linters) > 0 {
-		linters := c.Linters
-		opts = append(opts, coding.WithLinter(func(path string) []string {
-			for _, l := range linters {
-				if filepath.Ext(path) == l.Ext {
-					return append(slices.Clone(l.Command), path)
-				}
-			}
-			return nil
-		}))
-	}
-	w, err := coding.New(fsys, nil, opts...)
-	if err != nil {
-		return err
-	}
-	return a.SetWorkspace(w, WorkspaceInfo{Root: local.Root(), Sandbox: c.Sandbox, Executor: c.Executor, Image: c.Image, Network: c.Network, CommandsEnabled: commands})
 }
 
 var (
@@ -264,7 +234,7 @@ var codingToolsSpec = Spec[CodingToolsConfig]{
 			return err
 		}
 		unavailable := func(name string) string {
-			if info.Sandbox == ReadOnly && slices.Contains(codingWriteTools, name) {
+			if info.MaxSandbox == ReadOnly && slices.Contains(codingWriteTools, name) {
 				return "只读模式不提供写入类工具"
 			}
 			if !info.CommandsEnabled && slices.Contains(codingCommandTools, name) {
@@ -284,6 +254,11 @@ var codingToolsSpec = Spec[CodingToolsConfig]{
 				out = append(out, t)
 			}
 		}
+		for i, t := range out {
+			if info.MaxSandbox != ReadOnly && (slices.Contains(codingWriteTools, t.Name()) || slices.Contains(codingCommandTools, t.Name())) {
+				out[i] = permissions.DecorateTools([]interfaces.Tool{t})[0]
+			}
+		}
 		a.AddTools(out...)
 		return nil
 	},
@@ -292,6 +267,8 @@ var codingToolsSpec = Spec[CodingToolsConfig]{
 // PermissionsConfig 是 permissions 组件的配置。一个 preset 可以有多行，全部规则合并为一个策略（Deny > Ask > Allow），
 // 因此不可信层可以新增一行 deny/ask 规则收紧权限，而无需替换可信层的行。
 type PermissionsConfig struct {
+	// Role selects optional conservative tool-rule templates; it does not grant OS privileges.
+	Role string `yaml:"role"`
 	// Approval 为 ask（默认，交给宿主的 Approver）或 never（Ask 自动拒绝）。
 	Approval string `yaml:"approval"`
 	// Base 为 coding 时包含 coding.DefaultPolicy 的规则：放行读取、检索、待办与工作区内的编辑。
@@ -314,6 +291,11 @@ var decisions = map[string]policy.Decision{"allow": policy.Allow, "ask": policy.
 var permissionsSpec = Spec[PermissionsConfig]{
 	Name: ComponentPermissions, Version: "1",
 	Validate: func(c *PermissionsConfig) error {
+		if c.Role != "" {
+			if _, err := permissions.RoleRules(c.Role); err != nil {
+				return err
+			}
+		}
 		if c.Approval == "" {
 			c.Approval = "ask"
 		}
@@ -335,6 +317,9 @@ var permissionsSpec = Spec[PermissionsConfig]{
 	},
 	Needs: func(c *PermissionsConfig) Needs {
 		var n Needs
+		if c.Role != "" {
+			n.Grants = append(n.Grants, "采用角色权限模板 "+c.Role)
+		}
 		if c.Base == "coding" {
 			n.Grants = append(n.Grants, "采用 coding 默认放行规则")
 		}
@@ -349,6 +334,13 @@ var permissionsSpec = Spec[PermissionsConfig]{
 		return n
 	},
 	Build: func(_ context.Context, a *Assembler, c *PermissionsConfig) error {
+		if c.Role != "" {
+			rules, err := permissions.RoleRules(c.Role)
+			if err != nil {
+				return err
+			}
+			a.AddRules(rules, nil, false)
+		}
 		if c.Base == "coding" {
 			base := coding.DefaultPolicy()
 			a.AddRules(base.Rules, base.SessionTools, false)

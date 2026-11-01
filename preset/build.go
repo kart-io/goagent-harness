@@ -13,17 +13,25 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/kart-io/goagent-harness/permissions"
+	"github.com/kart-io/goagent-harness/sandbox"
+	"github.com/kart-io/goagent-harness/tools/coding"
 	"github.com/kart-io/goagent/core/durable"
 	"github.com/kart-io/goagent/interfaces"
 	"github.com/kart-io/goagent/llm"
 	"github.com/kart-io/goagent/tools"
-	"github.com/kart-io/goagent-harness/tools/coding"
 	"github.com/kart-io/goagent/tools/policy"
 	"github.com/kart-io/goagent/tools/spill"
 )
 
 // Host 是宿主提供给 Build 的环境。模型、SessionID、持久化作用域与预算由宿主在 Builder 上配置。
 type Host struct {
+	// AgentID is the trusted identity for session policy and approval. Empty uses the preset ID.
+	AgentID string
+	// SessionStore persists host-owned session mode/revision; nil is controller-local memory.
+	SessionStore permissions.SessionStore
+	// SandboxCeiling is an optional hard host ceiling, unaffected by project trust or approval.
+	SandboxCeiling *sandbox.Policy
 	// Root 是工作区根目录，workspace 组件需要；也是信任授权的项目标识。
 	Root string
 	// Approver 处理 Ask；为 nil 时 Ask 的结果为 Unavailable，按拒绝处理。
@@ -55,15 +63,26 @@ type parentScope struct {
 	guards       []tools.Guard
 	sandbox      Sandbox
 	denyApproval bool
+	policy       sandbox.Policy
+	ceiling      sandbox.Policy
+	controller   *permissions.Controller
+	envAllowlist []string
 }
 
 // WorkspaceInfo 描述 workspace 组件创建的工作区及其沙箱。
 type WorkspaceInfo struct {
-	Root     string  `json:"root"`
-	Sandbox  Sandbox `json:"sandbox"`
-	Executor string  `json:"executor"`
-	Image    string  `json:"image,omitempty"`
-	Network  bool    `json:"network"`
+	Root         string         `json:"root"`
+	Sandbox      Sandbox        `json:"sandbox"`
+	Executor     string         `json:"executor"`
+	Image        string         `json:"image,omitempty"`
+	Network      bool           `json:"network"`
+	MaxSandbox   Sandbox        `json:"max_sandbox"`
+	Policy       sandbox.Policy `json:"policy"`
+	Ceiling      sandbox.Policy `json:"ceiling"`
+	Backend      string         `json:"backend"`
+	Enforcement  string         `json:"enforcement"`
+	Contract     string         `json:"contract"`
+	EnvAllowlist []string       `json:"env_allowlist,omitempty"`
 	// CommandsEnabled 表示执行器能兑现沙箱模式，可以提供执行命令的工具。
 	CommandsEnabled bool `json:"commands_enabled"`
 }
@@ -83,6 +102,7 @@ type Assembler struct {
 
 	workspace     *coding.Workspace
 	workspaceInfo WorkspaceInfo
+	controller    *permissions.Controller
 
 	opts         buildOptions
 	afterPublish []func(*tools.Pipeline) error
@@ -198,7 +218,9 @@ type Assembly struct {
 	Pipeline   *tools.Pipeline
 	// Workspace 在没有 workspace 组件时为 nil。
 	Workspace *coding.Workspace
-	Manifest  Manifest
+	// Permissions exposes host-only session switching; never register it as a model tool.
+	Permissions *permissions.Controller
+	Manifest    Manifest
 
 	closeOnce sync.Once
 	closers   []func() error
@@ -418,6 +440,12 @@ func (a *Assembler) publish(cfgs []any) (*Assembly, error) {
 			return tools.ApprovalResult{Outcome: tools.ApprovalRejected, Feedback: "approval policy is never"}, nil
 		})
 	}
+	if err := a.attachSandbox(pipeline); err != nil {
+		return nil, err
+	}
+	if a.controller != nil {
+		loop.PromptContexts = append(loop.PromptContexts, a.sandboxPromptContext())
+	}
 	cfg := a.host.Dispatch
 	cfg.Pipeline = pipeline
 	cfg.ReturnArgumentErrors = true
@@ -438,6 +466,7 @@ func (a *Assembler) publish(cfgs []any) (*Assembly, error) {
 		Dispatcher:   d,
 		Pipeline:     pipeline,
 		Workspace:    a.workspace,
+		Permissions:  a.controller,
 		closers:      a.closers,
 	}
 	kept := map[string]bool{}
@@ -453,6 +482,7 @@ func (a *Assembler) publish(cfgs []any) (*Assembly, error) {
 // Manifest 是解析后执行语义的规范化描述。持久运行可记录 Digest，恢复时不一致即拒绝。秘密只出现引用。
 type Manifest struct {
 	Preset       string              `json:"preset"`
+	AgentID      string              `json:"agent_id"`
 	Components   []ManifestComponent `json:"components"`
 	Tools        []ManifestTool      `json:"tools"`
 	PromptSHA256 string              `json:"prompt_sha256"`
@@ -491,6 +521,10 @@ func sha256Hex(s string) string {
 // manifest 记录各行的有效配置（含默认值与 Resolve 补全的内容；被工具过滤跳过的行为 null）与保留下来的工具。
 func (a *Assembler) manifest(prompt string, cfgs []any, kept map[string]bool) (Manifest, error) {
 	m := Manifest{Preset: a.preset.ID, PromptSHA256: sha256Hex(prompt)}
+	m.AgentID = a.host.AgentID
+	if m.AgentID == "" {
+		m.AgentID = a.preset.ID
+	}
 	for i, r := range a.preset.Rows {
 		m.Components = append(m.Components, ManifestComponent{ID: r.ID, Use: r.Use, Version: r.comp.version, Config: cfgs[i], Info: a.contribs[i].info})
 		for _, t := range a.contribs[i].tools {
