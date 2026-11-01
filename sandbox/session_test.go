@@ -176,3 +176,42 @@ func TestRegistryRejectsProviderThatCannotHonorNetwork(t *testing.T) {
 	require.NoError(t, s.Close(context.Background()))
 	require.EqualValues(t, 1, e.destroys.Load())
 }
+
+type testProtectedFS struct {
+	env.FileSystem
+	names []string
+}
+
+func (f testProtectedFS) WithProtectedNames(names ...string) env.FileSystem {
+	f.names = append(append([]string(nil), f.names...), names...)
+	return f
+}
+func (f testProtectedFS) WriteFile(ctx context.Context, path string, data []byte, intent env.WriteIntent) (env.Version, error) {
+	for _, name := range f.names {
+		if path == name {
+			return "", env.ErrReadOnly
+		}
+	}
+	return f.FileSystem.WriteFile(ctx, path, data, intent)
+}
+func TestSessionForwardsMutationProtectionWithoutBypassingLifetime(t *testing.T) {
+	e, r := fixture(t)
+	e.fs = testProtectedFS{FileSystem: e.fs}
+	s, err := r.Open(context.Background(), Request{Provider: "test", Scope: "protected"})
+	require.NoError(t, err)
+	guarded := s.FileSystem().(MutationProtector).WithProtectedNames(".git")
+	_, err = guarded.WriteFile(context.Background(), ".git", nil, env.WriteIntent{})
+	require.ErrorIs(t, err, env.ErrReadOnly)
+	require.NoError(t, s.Close(context.Background()))
+	_, err = guarded.WriteFile(context.Background(), "safe", nil, env.WriteIntent{})
+	require.ErrorIs(t, err, ErrClosed)
+}
+
+func TestSessionDoesNotAdvertiseUnsupportedMutationProtection(t *testing.T) {
+	_, r := fixture(t)
+	s, err := r.Open(context.Background(), Request{Provider: "test", Scope: "plain"})
+	require.NoError(t, err)
+	_, supported := s.FileSystem().(MutationProtector)
+	require.False(t, supported)
+	require.NoError(t, s.Close(context.Background()))
+}

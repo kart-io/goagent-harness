@@ -93,10 +93,19 @@ func buildSubagent(ctx context.Context, a *Assembler, c *SubagentConfig) error {
 	slot := a.cur
 	parentSandbox := Sandbox("")
 	var parentNetwork *bool
+	if a.opts.parent != nil {
+		parentSandbox = a.opts.parent.sandbox
+		parentNetwork = a.opts.parent.network
+	}
 	a.AfterPublish(func(parent *tools.Pipeline) error {
 		if a.workspace != nil {
-			parentSandbox = a.workspaceInfo.Sandbox
+			if parentSandbox == "" || a.workspaceInfo.Sandbox.rank() < parentSandbox.rank() {
+				parentSandbox = a.workspaceInfo.Sandbox
+			}
 			network := a.workspaceInfo.Network
+			if parentNetwork != nil {
+				network = network && *parentNetwork
+			}
 			parentNetwork = &network
 		}
 		filter := c.ToolFilter

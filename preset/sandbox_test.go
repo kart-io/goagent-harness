@@ -178,3 +178,37 @@ func TestSandboxConfigCannotChooseConnectionIDOrUnknownProvider(t *testing.T) {
 	require.Error(t, err)
 	require.Empty(t, provider.requests)
 }
+
+func TestReviewGrandchildCannotLoseAncestorCeilings(t *testing.T) {
+	for _, mode := range []string{"sandbox", "network"} {
+		t.Run(mode, func(t *testing.T) {
+			host, provider := sandboxHost(t)
+			defer func() { require.NoError(t, host.Sandboxes.Close(context.Background())) }()
+			host.RunAgent = func(context.Context, *Assembly, string) (string, error) { return "", nil }
+			parentSandbox, network := "read-only", true
+			if mode == "network" {
+				parentSandbox = "workspace-write"
+				network = false
+			}
+			p := mustGet(t, trusted(fmt.Sprintf(`presets:
+ - id: p
+   components:
+    - {id: w, use: workspace, config: {executor: docker, image: unused, sandbox: %s, network: %t}}
+    - {id: d, use: subagent, config: {preset: middle, maxDepth: 3}}
+ - id: middle
+   components:
+    - {id: d, use: subagent, config: {preset: leaf, maxDepth: 3}}
+ - id: leaf
+   components:
+    - {id: w, use: workspace, config: {executor: sandbox, provider: fake, image: runtime, sandbox: workspace-write, network: true}}
+    - {id: c, use: coding-tools, config: {tools: [read_file]}}
+ `, parentSandbox, network)))
+			a, err := Build(context.Background(), p, host)
+			if a != nil {
+				defer func() { require.NoError(t, a.Close()) }()
+			}
+			require.Error(t, err)
+			require.Empty(t, provider.requests)
+		})
+	}
+}

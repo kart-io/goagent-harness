@@ -69,3 +69,11 @@ type Info struct {
 	Isolated, Owned, Retained   bool
 	Capabilities                env.Capabilities
 }
+
+// MutationProtector optionally enforces excluded path component names at the
+// actual mutation boundary, after any intermediate wrapper re-resolution.
+// Returned views share the same environment and add immutable restrictions.
+// This does not constrain commands; it protects FileSystem mutations only.
+type MutationProtector interface {
+	WithProtectedNames(names ...string) env.FileSystem
+}

@@ -38,7 +38,7 @@ func newSession(e Environment, provider, version string, owned, retain bool) *Se
 }
 func (s *Session) Info() Info                 { return s.info }
 func (s *Session) Executor() env.Executor     { return sessionExecutor{s} }
-func (s *Session) FileSystem() env.FileSystem { return sessionFS{s} }
+func (s *Session) FileSystem() env.FileSystem { return managedFS(s, s.fs) }
 
 func (s *Session) begin(parent context.Context) (context.Context, func(), error) {
 	if err := parent.Err(); err != nil {
@@ -129,18 +129,24 @@ func (e sessionExecutor) Run(parent context.Context, c env.Command) (env.Result,
 	return e.s.executor.Run(ctx, c)
 }
 
-type sessionFS struct{ s *Session }
+type sessionFS struct {
+	s  *Session
+	fs env.FileSystem
+}
 
 func (f sessionFS) Resolve(path string) (string, error) {
-	ctx, done, err := f.s.begin(context.Background())
+	return f.ResolveContext(context.Background(), path)
+}
+func (f sessionFS) ResolveContext(parent context.Context, path string) (string, error) {
+	ctx, done, err := f.s.begin(parent)
 	if err != nil {
 		return "", err
 	}
 	defer done()
-	if resolver, ok := f.s.fs.(ContextResolver); ok {
+	if resolver, ok := f.fs.(ContextResolver); ok {
 		return resolver.ResolveContext(ctx, path)
 	}
-	return f.s.fs.Resolve(path)
+	return f.fs.Resolve(path)
 }
 func (f sessionFS) Stat(parent context.Context, path string) (env.Info, error) {
 	ctx, done, err := f.s.begin(parent)
@@ -148,7 +154,7 @@ func (f sessionFS) Stat(parent context.Context, path string) (env.Info, error) {
 		return env.Info{}, err
 	}
 	defer done()
-	return f.s.fs.Stat(ctx, path)
+	return f.fs.Stat(ctx, path)
 }
 func (f sessionFS) ReadFile(parent context.Context, path string) ([]byte, env.Version, error) {
 	ctx, done, err := f.s.begin(parent)
@@ -156,7 +162,7 @@ func (f sessionFS) ReadFile(parent context.Context, path string) ([]byte, env.Ve
 		return nil, "", err
 	}
 	defer done()
-	return f.s.fs.ReadFile(ctx, path)
+	return f.fs.ReadFile(ctx, path)
 }
 func (f sessionFS) WriteFile(parent context.Context, path string, data []byte, intent env.WriteIntent) (env.Version, error) {
 	ctx, done, err := f.s.begin(parent)
@@ -164,7 +170,7 @@ func (f sessionFS) WriteFile(parent context.Context, path string, data []byte, i
 		return "", err
 	}
 	defer done()
-	return f.s.fs.WriteFile(ctx, path, data, intent)
+	return f.fs.WriteFile(ctx, path, data, intent)
 }
 func (f sessionFS) Remove(parent context.Context, path string) error {
 	ctx, done, err := f.s.begin(parent)
@@ -172,7 +178,7 @@ func (f sessionFS) Remove(parent context.Context, path string) error {
 		return err
 	}
 	defer done()
-	return f.s.fs.Remove(ctx, path)
+	return f.fs.Remove(ctx, path)
 }
 func (f sessionFS) Walk(parent context.Context, path string, fn func(env.Info) error) error {
 	ctx, done, err := f.s.begin(parent)
@@ -180,5 +186,20 @@ func (f sessionFS) Walk(parent context.Context, path string, fn func(env.Info) e
 		return err
 	}
 	defer done()
-	return f.s.fs.Walk(ctx, path, fn)
+	return f.fs.Walk(ctx, path, fn)
+}
+
+// Advertise atomic mutation protection only when the backend provides it.
+type protectedSessionFS struct{ sessionFS }
+
+func managedFS(s *Session, base env.FileSystem) env.FileSystem {
+	f := sessionFS{s, base}
+	if _, ok := base.(MutationProtector); ok {
+		return protectedSessionFS{f}
+	}
+	return f
+}
+func (f protectedSessionFS) WithProtectedNames(names ...string) env.FileSystem {
+	base := f.fs.(MutationProtector).WithProtectedNames(names...)
+	return managedFS(f.s, base)
 }
