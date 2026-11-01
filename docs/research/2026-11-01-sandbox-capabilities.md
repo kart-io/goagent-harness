@@ -82,3 +82,7 @@ Retain只是不删除正在保留的实例，不是磁盘/内存快照。借用C
 ## 落地顺序
 
 先修契约差距与生产资源记录，再接生命周期可选能力，随后做产物流转、批量FS和网络profile，最后在目标Linux/Kubernetes环境验证强隔离与其他供应商。具体任务编号、依赖和验收标准见[路线图](../design/SANDBOX_ROADMAP.md)。本次新增资料和探针，不把上游SDK真测能力直接升级成Harness已支持功能。
+
+## Pi Agent对照
+
+Pi的完整Agent隔离与只隔离工具是两种部署方式；其独立pi-env提供远端执行协议，并不创建容器或VM。协议/分页/背压可作为文件性能优化参考，但保留当前Root、CAS与未知结果语义。详见[Pi Agent设计调研](2026-11-01-pi-agent-design.md)及[选择性验证](../evaluation/2026-11-01-pi-agent/REPORT.md)。

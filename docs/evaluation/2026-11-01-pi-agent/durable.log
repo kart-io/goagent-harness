@@ -1,0 +1,13 @@
+
+ RUN  v4.1.12 /private/var/folders/7j/6j1y9dtx54d9qzsqp8vx_kdr0000gn/T/harness-pi-research-3l2n3_gq/pi
+
+(node:91103) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:91105) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+ Test Files  4 passed (4)
+      Tests  99 passed (99)
+   Start at  11:18:37
+   Duration  18.27s (transform 1.33s, setup 1.15s, import 906ms, tests 18.70s, environment 0ms)
+

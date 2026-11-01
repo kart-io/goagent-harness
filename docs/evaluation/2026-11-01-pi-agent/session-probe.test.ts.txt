@@ -1,0 +1,30 @@
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { expect, it } from "vitest";
+import { SessionManager } from "./packages/coding-agent/src/core/session-manager.ts";
+
+it("branching the actual CLI session tree changes context without rolling back workspace effects", async () => {
+ const root = await mkdtemp(join(tmpdir(), "pi-branch-research-"));
+ try {
+  const file = join(root, "result.txt");
+  await writeFile(file, "initial");
+  const session = SessionManager.inMemory(root);
+  const start = session.appendMessage({ role: "user", content: "write a result", timestamp: 1 });
+  session.appendMessage({
+   role: "assistant", content: [{ type: "toolCall", id: "write-1", name: "write", arguments: { path: file, content: "effect already committed" } }],
+   api: "openai-responses", provider: "research", model: "faux",
+   usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+   stopReason: "toolUse", timestamp: 2,
+  });
+  await writeFile(file, "effect already committed");
+  const effect = session.appendMessage({ role: "toolResult", toolCallId: "write-1", toolName: "write", content: [{ type: "text", text: "written" }], isError: false, timestamp: 2 });
+  session.branch(start);
+  session.appendMessage({ role: "user", content: "take another path", timestamp: 3 });
+  expect(session.buildSessionProjection().messages.some((message) => message.role === "toolResult")).toBe(false);
+  expect(await readFile(file, "utf8")).toBe("effect already committed");
+  session.branch(effect);
+  expect(session.buildSessionProjection().messages.some((message) => message.role === "toolResult")).toBe(true);
+  expect(await readFile(file, "utf8")).toBe("effect already committed");
+ } finally { await rm(root, { recursive: true, force: true }); }
+});

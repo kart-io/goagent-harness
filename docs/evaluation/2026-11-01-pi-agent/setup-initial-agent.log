@@ -1,0 +1,26 @@
+
+ RUN  v4.1.12 /private/tmp/goagent-pi-research-20261101
+
+······································
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  packages/agent/test/agent.test.ts [ packages/agent/test/agent.test.ts ]
+Error: Cannot find module './data/amazon-bedrock.json' imported from /private/tmp/goagent-pi-research-20261101/packages/ai/src/providers/amazon-bedrock.models.ts
+ ❯ packages/ai/src/providers/amazon-bedrock.models.ts:4:1
+      2| // Do not edit manually - run 'npm run generate-models' to update
+      3|
+      4| import values from "./data/amazon-bedrock.json" with { type: "json" };
+       | ^
+      5| import { flattenChatModelCatalog, flattenClassifierModelCatalog, flatt…
+      6|
+ ❯ packages/ai/src/models.generated.ts:4:1
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  38 passed (38)
+   Start at  11:09:24
+   Duration  685ms (transform 275ms, setup 0ms, import 281ms, tests 335ms, environment 0ms)
+

@@ -94,3 +94,7 @@ P0/P1/P2表示依赖和优先级，不承诺尚未测量的人天或发布日期
 所有阶段记录tenant/task/scope/instance/command/intent身份与结果类别；密钥不入事件。建议事件包括creating、ready、operation_unknown、renew_failed、closing、cleanup_failed、deleted。若向业务发送webhook，用独立投递重试和稳定event_id，投递失败不重放已经执行的命令。
 
 根模块和供应商子模块分别验证、发布；新增子模块API所依赖的根版本必须可获取。本地workspace通过不等于消费者可从模块代理下载。每次报告都写明真实验证环境、镜像digest、版本、未覆盖项和清理结果。
+
+## Pi Agent调研补充
+
+[Pi设计对照](../research/2026-11-01-pi-agent-design.md)为S1/S2补充子工作所有权、取消与持久恢复契约，为S3补充请求/句柄代际、二进制传输、分页和背压参考。Pi-env不是沙盒创建服务，cwd也不是工作区安全根；不能用其较宽Node式写入替代当前CAS、原子写和最终保护。具体分层采纳见[PI计划](PI_AGENT_ADOPTION_PLAN.md)，不增加第二套Harness执行循环。

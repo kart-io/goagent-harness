@@ -1,0 +1,13 @@
+import { fileURLToPath } from "node:url";
+import { mergeConfig } from "vitest/config";
+import base from "./vitest.base.ts";
+import durable from "./packages/durable/vitest.config.ts";
+
+export default mergeConfig(base, {
+ ...durable,
+ test: {
+  ...durable.test,
+  setupFiles: [fileURLToPath(new URL("./packages/durable/test/setup-document-retention.ts", import.meta.url))],
+  env: { PI_OFFLINE: "1" },
+ },
+});
