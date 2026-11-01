@@ -247,11 +247,21 @@ func (f FileSystem) route(p string) (env.FileSystem, string, string, error) {
 	return base, rel, parts[0] + "/", nil
 }
 func (f FileSystem) Resolve(p string) (string, error) {
+	return f.ResolveContext(context.Background(), p)
+}
+func (f FileSystem) ResolveContext(ctx context.Context, p string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	base, rel, prefix, err := f.route(p)
 	if err != nil {
 		return "", err
 	}
-	rel, err = base.Resolve(rel)
+	if resolver, ok := base.(ContextResolver); ok {
+		rel, err = resolver.ResolveContext(ctx, rel)
+	} else {
+		rel, err = base.Resolve(rel)
+	}
 	if err != nil {
 		return "", err
 	}

@@ -1,0 +1,25 @@
+
+ RUN  v4.1.12 /private/tmp/goagent-pi-research-20261101
+
+ ❯ packages/coding-agent/test/file-mutation-queue.test.ts (0 test)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  packages/coding-agent/test/file-mutation-queue.test.ts [ packages/coding-agent/test/file-mutation-queue.test.ts ]
+Error: Cannot find package 'cross-spawn' imported from /private/tmp/goagent-pi-research-20261101/packages/coding-agent/src/utils/child-process.ts
+ ❯ packages/coding-agent/src/utils/child-process.ts:14:1
+     12| } from "node:child_process";
+     13| import type { Readable } from "node:stream";
+     14| import crossSpawn from "cross-spawn";
+       | ^
+     15|
+     16| const EXIT_STDIO_GRACE_MS = 100;
+ ❯ packages/coding-agent/src/utils/paths.ts:5:1
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  51 passed (51)
+   Start at  11:12:10
+   Duration  4.85s (transform 413ms, setup 539ms, import 72ms, tests 4.44s, environment 0ms)

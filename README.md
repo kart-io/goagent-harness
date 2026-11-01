@@ -6,7 +6,7 @@ GoAgent 提供模型与工具循环、类型化工作流、持久恢复、预算
 
 ## 模块与版本
 
-模块路径：`github.com/kart-io/goagent-harness`；Go 1.25 及以上；GoAgent 基线为 **v0.23.0**。
+模块路径：`github.com/kart-io/goagent-harness`；Go 1.25 及以上；GoAgent 基线为 **v0.32.2**。
 本仓库由 GoAgent 拆出，源码位于 [kart-io/goagent-harness](https://github.com/kart-io/goagent-harness)，默认分支为 `main`。当前尚未发布版本标签，可克隆仓库运行测试与示例。
 迁移来源与导入路径对照见 [迁移指南](docs/MIGRATION.md) 和 [NOTICE](NOTICE)。
 
@@ -17,7 +17,7 @@ GoAgent 提供模型与工具循环、类型化工作流、持久恢复、预算
 | `preset` | 配置加载、分层合并、组件装配、策略与沙箱校验、装配清单 |
 | `tools/coding` | 工作区读写编辑、检索、命令、Git、待办 |
 | `integration` | 通过公开 API 验证 Harness 与 GoAgent 持久图、审批和工具执行的组合 |
-| `sandbox` | 文件策略、命名目录范围与 Docker / 本机 OS 执行适配器 |
+| `sandbox` | 文件/网络策略、Docker/本机执行、供应商无关 Provider 与受管会话 |
 | `permissions` | Agent 会话权限、单次提权、角色模板与父子权限交集 |
 | `examples/coding-agent` | 配置驱动的编码修复案例 |
 | `examples/plan-agent` | 计划模式、钩子、压缩和运行中交互案例 |
@@ -86,6 +86,8 @@ go run ./examples/sandbox-permissions -approve
 本机沙盒主要限制文件修改和请求的网络行为，不保证宿主文件保密；它不隔离 Harness 本身、任意 Go 插件、MCP 服务或命令钩子。
 Windows native 与 Landlock 尚未实现。平台验证范围和剩余限制见 [sandbox](sandbox/README.md)，授权与恢复契约见 [permissions](permissions/README.md)。
 
+远端环境接入、Preset 配置、所有权/恢复及可运行案例见 [Sandbox 指南](docs/guides/SANDBOX.md)，职责边界见 [Sandbox 设计](docs/design/SANDBOX.md)。
+
 ## 验证
 
 ```bash
@@ -112,3 +114,7 @@ GOAGENT_CODING_DOCKER_IMAGE=alpine:3 go test -run Docker ./tools/coding
 - 文件系统协调与发布边界以所用 GoAgent 版本的 `harness/env` 契约为准。
 
 采用 Apache-2.0 许可证，见 [LICENSE](LICENSE)。
+
+Sandbox 补充资料：[API参考](docs/reference/SANDBOX_API.md)、[场景指南](docs/guides/SANDBOX_SCENARIOS.md)、[能力与选型调研](docs/research/2026-11-01-sandbox-capabilities.md)、[后续路线图](docs/design/SANDBOX_ROADMAP.md)、[合并验收](docs/evaluation/2026-11-01-sandbox-main/REPORT.md)。路线图中的新能力尚未实现。
+
+Pi Agent设计对照：[固定源码调研](docs/research/2026-11-01-pi-agent-design.md)、[采纳计划](docs/design/PI_AGENT_ADOPTION_PLAN.md)、[230项选择性验证](docs/evaluation/2026-11-01-pi-agent/REPORT.md)。区分编码CLI与实验性Durable，不把会话分支视为文件回滚。

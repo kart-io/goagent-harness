@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -91,9 +92,21 @@ func buildSubagent(ctx context.Context, a *Assembler, c *SubagentConfig) error {
 	a.AddTools(tool)
 	slot := a.cur
 	parentSandbox := Sandbox("")
+	var parentNetwork *bool
+	if a.opts.parent != nil {
+		parentSandbox = a.opts.parent.sandbox
+		parentNetwork = a.opts.parent.network
+	}
 	a.AfterPublish(func(parent *tools.Pipeline) error {
 		if a.workspace != nil {
-			parentSandbox = a.workspaceInfo.Sandbox
+			if parentSandbox == "" || a.workspaceInfo.Sandbox.rank() < parentSandbox.rank() {
+				parentSandbox = a.workspaceInfo.Sandbox
+			}
+			network := a.workspaceInfo.Network
+			if parentNetwork != nil {
+				network = network && *parentNetwork
+			}
+			parentNetwork = &network
 		}
 		filter := c.ToolFilter
 		childHost := a.host
@@ -101,10 +114,15 @@ func buildSubagent(ctx context.Context, a *Assembler, c *SubagentConfig) error {
 			childHost.AgentID = a.preset.ID
 		}
 		childHost.AgentID += "/" + a.preset.Rows[slot].ID
+		policy, ceiling, controller, envAllowlist := a.workspaceInfo.Policy, a.workspaceInfo.Ceiling, a.controller, a.workspaceInfo.EnvAllowlist
+		if a.workspace == nil && a.opts.parent != nil {
+			policy, ceiling, controller, envAllowlist = a.opts.parent.policy, a.opts.parent.ceiling, a.opts.parent.controller, a.opts.parent.envAllowlist
+		}
 		child, err := build(ctx, target, childHost, buildOptions{
 			depth: depth,
-			parent: &parentScope{pre: parent.Pre, guards: parent.Guards, sandbox: parentSandbox, denyApproval: a.denyApproval,
-				policy: a.workspaceInfo.Policy, ceiling: a.workspaceInfo.Ceiling, controller: a.controller, envAllowlist: a.workspaceInfo.EnvAllowlist},
+			scope: append(slices.Clone(a.opts.scope), a.preset.Rows[slot].ID, target.ID),
+			parent: &parentScope{network: parentNetwork, pre: parent.Pre, guards: parent.Guards, sandbox: parentSandbox, denyApproval: a.denyApproval,
+				policy: policy, ceiling: ceiling, controller: controller, envAllowlist: envAllowlist},
 			filter: &filter,
 		})
 		if err != nil {

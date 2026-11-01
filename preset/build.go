@@ -32,6 +32,9 @@ type Host struct {
 	SessionStore permissions.SessionStore
 	// SandboxCeiling is an optional hard host ceiling, unaffected by project trust or approval.
 	SandboxCeiling *sandbox.Policy
+	// Sandboxes selects trusted providers and per-task instance bindings. The
+	// host closes this registry on task shutdown, including failed assemblies.
+	Sandboxes *sandbox.Registry
 	// Root 是工作区根目录，workspace 组件需要；也是信任授权的项目标识。
 	Root string
 	// Approver 处理 Ask；为 nil 时 Ask 的结果为 Unavailable，按拒绝处理。
@@ -52,6 +55,7 @@ type Host struct {
 
 // buildOptions 是作为子 Agent 装配时的约束。
 type buildOptions struct {
+	scope  []string
 	depth  int
 	parent *parentScope
 	filter *ToolFilter
@@ -59,6 +63,7 @@ type buildOptions struct {
 
 // parentScope 是父 Agent 的权限：子 Agent 的调用同样要经过父 Agent 的调用前钩子与守卫，权限因此不超过父 Agent。
 type parentScope struct {
+	network      *bool
 	pre          []tools.PreHook
 	guards       []tools.Guard
 	sandbox      Sandbox
@@ -83,6 +88,8 @@ type WorkspaceInfo struct {
 	Enforcement  string         `json:"enforcement"`
 	Contract     string         `json:"contract"`
 	EnvAllowlist []string       `json:"env_allowlist,omitempty"`
+	Provider     string         `json:"provider,omitempty"`
+	SandboxID    string         `json:"sandbox_id,omitempty"`
 	// CommandsEnabled 表示执行器能兑现沙箱模式，可以提供执行命令的工具。
 	CommandsEnabled bool `json:"commands_enabled"`
 }
@@ -249,6 +256,9 @@ func Build(ctx context.Context, p *Resolved, host Host) (*Assembly, error) {
 func build(ctx context.Context, p *Resolved, host Host, opts buildOptions) (asm *Assembly, err error) {
 	if p == nil {
 		return nil, errors.New("preset is required")
+	}
+	if len(opts.scope) == 0 {
+		opts.scope = []string{p.ID}
 	}
 	if host.Root != "" {
 		abs, err := filepath.Abs(host.Root)

@@ -107,6 +107,8 @@ type WorkspaceConfig struct {
 	EnvAllowlist []string `yaml:"envAllowlist"`
 	// Executor 为 docker（默认）、native 或不隔离的 local。
 	Executor string `yaml:"executor"`
+	// Provider is a trusted Host.Sandboxes key, only for executor=sandbox.
+	Provider string `yaml:"provider" json:",omitempty"`
 	// Image 是 docker 执行器的镜像。
 	Image string `yaml:"image"`
 	// Network 表示命令可以联网；执行器的实际能力须与之一致。
@@ -153,15 +155,25 @@ var workspaceSpec = Spec[WorkspaceConfig]{
 		}
 		switch c.Executor {
 		case "docker":
+			if c.Provider != "" {
+				return errors.New("docker 不使用 provider")
+			}
 			if c.Image == "" {
 				return errors.New("docker 执行器需要 image")
 			}
 		case "local", "native":
+			if c.Provider != "" {
+				return errors.New("local/native 不使用 provider")
+			}
 			if c.Image != "" {
 				return errors.New("local 执行器不使用 image")
 			}
+		case "sandbox":
+			if strings.TrimSpace(c.Provider) == "" || strings.ContainsAny(c.Provider, "/: \t\n") || c.Image == "" {
+				return errors.New("sandbox 需要命名 provider 和 image")
+			}
 		default:
-			return fmt.Errorf("executor %q 无效，可选 docker、local、native", c.Executor)
+			return fmt.Errorf("executor %q 无效，可选 docker、local、native、sandbox", c.Executor)
 		}
 		if c.CommandTimeout < 0 || c.MaxOutputBytes < 0 {
 			return errors.New("commandTimeout 与 maxOutputBytes 不能为负")
@@ -174,7 +186,11 @@ var workspaceSpec = Spec[WorkspaceConfig]{
 		return nil
 	},
 	Needs: func(c *WorkspaceConfig) Needs {
-		n := Needs{Sandbox: c.MaxSandbox, Executor: c.Executor, Image: c.Image, Network: c.Network}
+		executor := c.Executor
+		if executor == "sandbox" {
+			executor += ":" + c.Provider
+		}
+		n := Needs{Sandbox: c.MaxSandbox, Executor: executor, Image: c.Image, Network: c.Network}
 		for _, root := range c.AdditionalWritableRoots {
 			n.Grants = append(n.Grants, "额外可写目录 "+root)
 		}

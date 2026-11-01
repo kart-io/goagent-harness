@@ -21,6 +21,9 @@ import (
 // buildWorkspace keeps legacy local-readonly behavior (no command tools), while
 // real confined execution is supplied by Docker or an explicitly selected native backend.
 func buildWorkspace(ctx context.Context, a *Assembler, c *WorkspaceConfig) error {
+	if c.Executor == "sandbox" && (len(c.AdditionalWritableRoots) > 0 || len(c.EnvAllowlist) > 0) {
+		return fmt.Errorf("%w: managed backends do not map host writable roots or environment allowlists", sandbox.ErrUnsupported)
+	}
 	if a.Root() == "" {
 		return fmt.Errorf("Host.Root 未设置")
 	}
@@ -44,6 +47,12 @@ func buildWorkspace(ctx context.Context, a *Assembler, c *WorkspaceConfig) error
 		}
 	}
 	if parent := a.opts.parent; parent != nil {
+		if parent.sandbox != "" && c.MaxSandbox.rank() > parent.sandbox.rank() {
+			return fmt.Errorf("子 Agent 的沙箱权限宽于父 Agent")
+		}
+		if parent.network != nil && !*parent.network && c.Network {
+			return fmt.Errorf("子 Agent 不得扩大父 Agent 的网络权限")
+		}
 		if parent.policy.WorkspaceRoot != "" {
 			if err := sandbox.Within(parent.ceiling, ceiling); err != nil {
 				return fmt.Errorf("子 Agent 的沙箱权限宽于父 Agent: %w", err)
@@ -54,6 +63,9 @@ func buildWorkspace(ctx context.Context, a *Assembler, c *WorkspaceConfig) error
 				return fmt.Errorf("子 Agent 不能增加父 Agent 未授权的环境变量 %s", name)
 			}
 		}
+	}
+	if c.Executor == "sandbox" {
+		return buildManagedWorkspace(ctx, a, c, p, ceiling)
 	}
 	executor := &sandbox.Executor{Policy: p, Backend: c.Executor, Image: c.Image, EnvAllowlist: slices.Clone(c.EnvAllowlist)}
 	commands := true

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kart-io/goagent-harness/sandbox"
+	"github.com/kart-io/goagent/core/durable"
 	"github.com/kart-io/goagent/harness/env"
 	"github.com/kart-io/goagent/interfaces"
 	"github.com/kart-io/goagent/tools"
@@ -19,6 +21,13 @@ const maxLogCount = 100
 type commandTool struct {
 	*tools.BaseTool
 	timeout time.Duration
+}
+
+// Commands and file mutations (including linter subprocesses) can take effect
+// before an error is returned. Without effect reconciliation, journal recovery
+// must ask the host to resolve failures instead of executing the same call again.
+func (t *commandTool) DurableOperationPolicy() durable.OperationPolicy {
+	return durable.OperationPolicy{MaxAttempts: 1}
 }
 
 func (t *commandTool) DispatchTimeout() time.Duration { return t.timeout + 10*time.Second }
@@ -44,7 +53,7 @@ func (w *Workspace) execute(ctx context.Context, argv []string, dir string) (run
 	r := runResult{exitCode: res.ExitCode, duration: time.Since(start)}
 	r.output, r.truncated = truncateOutput(res.Output, w.maxOutputBytes)
 	if err != nil {
-		if ctx.Err() == nil && errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+		if !errors.Is(err, sandbox.ErrUnconfirmed) && errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil && errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 			r.timedOut, r.exitCode = true, -1
 			return r, nil
 		}

@@ -1,0 +1,4 @@
+first: success=false
+approval: agent=demo-coder session=demo-session call=approved
+approved: success=true
+last: success=false

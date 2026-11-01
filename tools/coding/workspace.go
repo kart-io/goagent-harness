@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kart-io/goagent-harness/sandbox"
 	"github.com/kart-io/goagent/harness/env"
 	"github.com/kart-io/goagent/interfaces"
 )
@@ -88,6 +89,10 @@ func New(fsys env.FileSystem, executor env.Executor, opts ...Option) (*Workspace
 	if fsys == nil {
 		return nil, errors.New("workspace file system must not be nil")
 	}
+	if guard, ok := fsys.(sandbox.MutationProtector); ok {
+		fsys = guard.WithProtectedNames(".git")
+	}
+	fsys = protectedFS{fsys}
 	cp := env.NewCheckpointed(fsys)
 	w := &Workspace{
 		base:           fsys,

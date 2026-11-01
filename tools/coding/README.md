@@ -82,3 +82,12 @@ go test ./tools/coding/ ./preset/ ./integration/
 # 可选：Docker 测试，镜像需含 sh
 GOAGENT_CODING_DOCKER_IMAGE=alpine:3 go test -run Docker ./tools/coding/
 ```
+
+## 远端 Sandbox
+
+`coding.New(session.FileSystem(), session.Executor())` 可把上述工具整体接入远端工作区。文件路径边界、大小限制与条件写协调由选定 FileSystem 提供；命令生命周期与输出上限由 Executor 提供，因此不能把前述 LocalFS/本地进程约定自动视作所有后端的保证。供应商实现应明确条件写的协作范围、直接命令能否绕过，以及输出超限后的取消与未知结果语义。完整功能与差异见 [Sandbox 指南](../../docs/guides/SANDBOX.md)。
+
+
+## 持久调用的未知结果
+
+编码命令与文件修改工具为同一 journal/CallID 设置 MaxAttempts=1，权限/schema 装饰器保留该策略。首次 ErrUnconfirmed 保持错误；持久恢复遇到失败记录返回 ErrOperationAttention，不重新执行副作用。正常完成的结果仍可从日志回放。确需再次发起操作时，宿主先核对实际结果，再明确安排新调用；换 CallID 不自动证明重试安全。

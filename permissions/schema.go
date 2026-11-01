@@ -2,6 +2,7 @@ package permissions
 
 import (
 	"encoding/json"
+	"github.com/kart-io/goagent/core/durable"
 	"github.com/kart-io/goagent/interfaces"
 	"github.com/kart-io/goagent/tools"
 	"time"
@@ -20,6 +21,22 @@ type decoratedTimedTool struct {
 }
 
 func (t decoratedTimedTool) DispatchTimeout() time.Duration { return t.timeout }
+
+type decoratedDurableTool struct {
+	decoratedTool
+	policy tools.DurablePolicyProvider
+}
+
+func (t decoratedDurableTool) DurableOperationPolicy() durable.OperationPolicy {
+	return t.policy.DurableOperationPolicy()
+}
+
+type decoratedDurableTimedTool struct {
+	decoratedDurableTool
+	timeout time.Duration
+}
+
+func (t decoratedDurableTimedTool) DispatchTimeout() time.Duration { return t.timeout }
 
 // DecorateTools adds escalation arguments to a caller-selected set of supported
 // file/command execution tools. The caller must never pass arbitrary MCP tools:
@@ -48,7 +65,14 @@ func DecorateTools(input []interfaces.Tool) []interfaces.Tool {
 			continue
 		}
 		wrapper := decoratedTool{Tool: t, schema: string(encoded)}
-		if timeout, ok := t.(tools.DispatchTimeoutProvider); ok {
+		if policy, ok := t.(tools.DurablePolicyProvider); ok {
+			wrapped := decoratedDurableTool{decoratedTool: wrapper, policy: policy}
+			if timeout, ok := t.(tools.DispatchTimeoutProvider); ok {
+				output[i] = decoratedDurableTimedTool{decoratedDurableTool: wrapped, timeout: timeout.DispatchTimeout()}
+			} else {
+				output[i] = wrapped
+			}
+		} else if timeout, ok := t.(tools.DispatchTimeoutProvider); ok {
 			output[i] = decoratedTimedTool{decoratedTool: wrapper, timeout: timeout.DispatchTimeout()}
 		} else {
 			output[i] = wrapper

@@ -3,8 +3,10 @@ package permissions
 import (
 	"context"
 	"encoding/json"
+	"github.com/kart-io/goagent/core/durable"
 	"github.com/kart-io/goagent/interfaces"
 	"github.com/kart-io/goagent/tools"
+	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
 )
@@ -66,4 +68,40 @@ func TestApproverCannotMutateCall(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
+}
+
+type durableSchemaTool struct {
+	*tools.BaseTool
+	policy durable.OperationPolicy
+}
+
+func (t durableSchemaTool) DurableOperationPolicy() durable.OperationPolicy { return t.policy }
+
+type timedDurableSchemaTool struct{ durableSchemaTool }
+
+func (t timedDurableSchemaTool) DispatchTimeout() time.Duration { return 17 * time.Second }
+func TestDecorateToolsPreservesExplicitDurablePolicy(t *testing.T) {
+	reconcile := func(context.Context) (json.RawMessage, bool, error) { return json.RawMessage(`"confirmed"`), true, nil }
+	policy := durable.OperationPolicy{MaxAttempts: 7, RetryFailed: true, Resumable: true, Reconcile: reconcile}
+	base := tools.NewBaseTool("custom_effect", "effect", `{"type":"object","properties":{}}`, func(context.Context, *interfaces.ToolInput) (*interfaces.ToolOutput, error) { return nil, nil })
+	for _, tool := range []interfaces.Tool{durableSchemaTool{base, policy}, timedDurableSchemaTool{durableSchemaTool{base, policy}}} {
+		decorated := DecorateTools([]interfaces.Tool{tool})[0]
+		provider, ok := decorated.(tools.DurablePolicyProvider)
+		require.True(t, ok, "decoration must retain an explicit durable policy")
+		got := provider.DurableOperationPolicy()
+		require.Equal(t, policy.MaxAttempts, got.MaxAttempts)
+		require.Equal(t, policy.RetryFailed, got.RetryFailed)
+		require.Equal(t, policy.Resumable, got.Resumable)
+		require.NotNil(t, got.Reconcile)
+		value, found, err := got.Reconcile(context.Background())
+		require.NoError(t, err)
+		require.True(t, found)
+		require.JSONEq(t, `"confirmed"`, string(value))
+		if timeout, ok := tool.(tools.DispatchTimeoutProvider); ok {
+			require.Equal(t, timeout.DispatchTimeout(), decorated.(tools.DispatchTimeoutProvider).DispatchTimeout())
+		}
+	}
+	plain := DecorateTools([]interfaces.Tool{base})[0]
+	_, ok := plain.(tools.DurablePolicyProvider)
+	require.False(t, ok, "do not invent a durable policy for unrelated tools")
 }
