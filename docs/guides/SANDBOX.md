@@ -133,7 +133,7 @@ presets:
 
 恢复时保持 Namespace 和装配 Scope，宿主 Resolver 返回此前保存的 ID。OpenSandbox 会核对版本、Root/Scope/Image 摘要、实际镜像与网络标签，不允许把任意无关实例接进来。摘要采用无 padding 的 base32 SHA256，以满足服务端标签限制；不会在标签存放原始任务内容。Manifest 仍记录真实 SandboxID 和 Provider 版本。新建的空实例即使配置相同也有不同 Manifest；Retain → 同实例 Connect 才能保持相同执行身份。
 
-TTL 默认 10 分钟。本适配器不自动续期；需要更长任务时在宿主设置 TTL（1 秒至 24 小时，服务端仍可收窄）。Retain 不等于永久保留。持久 workflow 需由宿主 PinManifest，且业务操作需要自己的幂等键；连接恢复不意味着任意命令可安全重放。
+TTL 默认 10 分钟。本适配器不自动续期；固定1.2.0服务创建实例最少60秒；当前New本地接受1秒至24小时，但小于60秒会在Create被服务端拒绝。需要更长任务时设置不少于60秒的TTL，并遵守服务端上限，差距见[API参考](../reference/SANDBOX_API.md)。Retain 不等于永久保留。持久 workflow 需由宿主 PinManifest，且业务操作需要自己的幂等键；连接恢复不意味着任意命令可安全重放。
 
 ## 失败、取消与边界
 
@@ -152,3 +152,11 @@ TTL 默认 10 分钟。本适配器不自动续期；需要更长任务时在宿
 FS 请求通过临时文件上传，避免 Linux 单个 argv 长度限制。辅助程序使用目录 fd/no-follow 限制路径，内部链接可解析，外部链接被拒绝，Walk 不跟随链接，Remove 删除链接本身。每次操作重新检查路径；Walk 在并发变化下不是快照。WriteFile/Remove 要求规范的变更路径，内部别名应先通过 Resolve 转为实际路径；变更前发生别名重定向会拒绝。coding 在 Observed/Checkpointed 下面重新检查 `.git`，并通过可选 `sandbox.MutationProtector` 将保护规则传入支持的后端，OpenSandbox 在实际辅助程序变更边界再检查，覆盖中间解析后的规范路径。Session 保留此能力且不绕过生命周期；不支持的后端不会被虚报为支持。命令仍可按已审批权限运行 Git，本规则保护 FileSystem 变更。
 
 条件写的锁只协调辅助程序写者。直接命令、外部编辑器或有权限的恶意进程可绕过锁；不承诺对这些写者的 CAS。写入原子替换后 fsync 失败或调用取消时，文件可能已经改变，需重新读取确认。命令的工作目录在根内，但命令可读写沙盒内其他路径；工作区文件接口边界不等于容器内命令文件权限。进程停止确认不承诺所有脱离进程组的子进程消失，owned 实例最终整体销毁。
+
+## 更多资料
+
+- [API与配置参考](../reference/SANDBOX_API.md)
+- [业务、子Agent与workflow场景](SANDBOX_SCENARIOS.md)
+- [选型、能力与生产差距调研](../research/2026-11-01-sandbox-capabilities.md)
+- [后续执行路线图（提案）](../design/SANDBOX_ROADMAP.md)
+- [补充真实服务探针与测量](../evaluation/2026-11-01-sandbox-research/REPORT.md)

@@ -5,9 +5,10 @@ from pathlib import Path
 SERVER='opensandbox/server@sha256:25bebdcf1cf7724eb923faecbdbbf82d4038c6ab35c736151574726d14006f30'
 EXECD='opensandbox/execd@sha256:c75836c46ef4302afccec182d5d7339eb2f905f51e3d73b7aa17bb76c832526c'
 def main():
- parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--output',type=Path);args=parser.parse_args()
+ parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--output',type=Path);parser.add_argument('--probe',type=Path,help='optional trusted local Go research probe');args=parser.parse_args()
  repo=Path(__file__).resolve().parents[1];output=(args.output or Path(tempfile.mkdtemp(prefix='harness-sandbox-results-'))).resolve();output.mkdir(parents=True,exist_ok=True)
  env=os.environ.copy();env.pop('GOROOT',None);env['GOTOOLCHAIN']='go1.25.0'
+ if args.probe and (not args.probe.is_file() or args.probe.suffix != '.go'): parser.error('--probe requires an existing trusted .go file')
  name='harness-sandbox-'+secrets.token_hex(6);key=secrets.token_hex(24);created=False;port=0
  def command(argv,log=None,timeout=300,cwd=None):
   if log:
@@ -70,6 +71,16 @@ mode="direct"
    (output/'cleanup.json').write_text(json.dumps({'verified_absent_container_ids':ids},indent=2)+'\n')
    for example in ('coding','workflow'):
     command(['go','run','./examples/'+example],cwd=repo/'sandbox/opensandbox',log='example-'+example+'.log')
+   if args.probe:
+    command(['go','run',str(args.probe.resolve())],cwd=repo/'sandbox/opensandbox',log='research-probe.json')
+    research=json.loads((output/'research-probe.json').read_text())
+    sandbox_id=research['sandbox_id']
+    if not re.fullmatch(r'[a-f0-9-]{36}',sandbox_id): raise RuntimeError('invalid probe sandbox ID')
+    remaining=subprocess.check_output(['docker','ps','-aq','--filter','name=^sandbox-'+sandbox_id+'$'],text=True,timeout=15).strip()
+    if remaining: raise RuntimeError('research sandbox remains after Destroy')
+    cleanup=json.loads((output/'cleanup.json').read_text())
+    cleanup['probe_verified_absent_container_ids']=[sandbox_id]
+    (output/'cleanup.json').write_text(json.dumps(cleanup,indent=2)+'\n')
    print('PASS: '+str(output),flush=True)
   finally:
    if created:

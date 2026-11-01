@@ -1,0 +1,10 @@
+{
+  "verified_absent_container_ids": [
+    "c7179e3c-2ecb-4f54-9b7f-f2eec0949fa8",
+    "a8225bed-c214-4557-b674-1cfcc045c5da",
+    "9b6f0101-a7f3-4bd8-8a0c-761be8dcde52"
+  ],
+  "probe_verified_absent_container_ids": [
+    "8bbdbced-aee9-407e-abb9-27b2ee38a235"
+  ]
+}

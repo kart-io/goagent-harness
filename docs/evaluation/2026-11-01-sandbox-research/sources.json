@@ -1,0 +1,132 @@
+{
+  "retrieved_at_utc": "2026-11-01T02:58:40.377452+00:00",
+  "harness_baseline": "e8c7ebf252c3efd30b76ae0a62deea77f1bb91e4",
+  "candidate_repositories": [
+    {
+      "repo": "opensandbox-group/OpenSandbox",
+      "url": "https://github.com/opensandbox-group/OpenSandbox",
+      "default_branch": "main",
+      "head": "c2f55b20e945d89efe3d35220942a997a3551751",
+      "archived": false,
+      "license_spdx": "Apache-2.0",
+      "readme_at_revision": "https://github.com/opensandbox-group/OpenSandbox/blob/c2f55b20e945d89efe3d35220942a997a3551751/README.md"
+    },
+    {
+      "repo": "e2b-dev/E2B",
+      "url": "https://github.com/e2b-dev/E2B",
+      "default_branch": "main",
+      "head": "8cc9ed1e30a57d89cefaec112680567d62f21112",
+      "archived": false,
+      "license_spdx": "Apache-2.0",
+      "readme_at_revision": "https://github.com/e2b-dev/E2B/blob/8cc9ed1e30a57d89cefaec112680567d62f21112/README.md"
+    },
+    {
+      "repo": "e2b-dev/runtime",
+      "url": "https://github.com/e2b-dev/runtime",
+      "default_branch": "main",
+      "head": "78d5ff91515b58a9bd2d0b28b14f80428c63d15e",
+      "archived": false,
+      "license_spdx": "Apache-2.0",
+      "readme_at_revision": "https://github.com/e2b-dev/runtime/blob/78d5ff91515b58a9bd2d0b28b14f80428c63d15e/README.md"
+    },
+    {
+      "repo": "daytonaio/daytona",
+      "url": "https://github.com/daytonaio/daytona",
+      "default_branch": "main",
+      "head": "ec4c21b2d597091ac09ecc278f3bcc172575a987",
+      "archived": true,
+      "license_spdx": null,
+      "readme_at_revision": "https://github.com/daytonaio/daytona/blob/ec4c21b2d597091ac09ecc278f3bcc172575a987/README.md"
+    },
+    {
+      "repo": "daytona/clients",
+      "url": "https://github.com/daytona/clients",
+      "default_branch": "main",
+      "head": "4fd08450ef0f2e07d6c75aad4a8fe1753c1f5d25",
+      "archived": false,
+      "license_spdx": "NOASSERTION",
+      "readme_at_revision": "https://github.com/daytona/clients/blob/4fd08450ef0f2e07d6c75aad4a8fe1753c1f5d25/README.md"
+    },
+    {
+      "repo": "google/gvisor",
+      "url": "https://github.com/google/gvisor",
+      "default_branch": "master",
+      "head": "aa767e4c43d011121271551fe24da501a56f729d",
+      "archived": false,
+      "license_spdx": "Apache-2.0",
+      "readme_at_revision": "https://github.com/google/gvisor/blob/aa767e4c43d011121271551fe24da501a56f729d/README.md"
+    },
+    {
+      "repo": "firecracker-microvm/firecracker",
+      "url": "https://github.com/firecracker-microvm/firecracker",
+      "default_branch": "main",
+      "head": "ab198c7aa1f72cb30541165c20be27dbd1b88c2e",
+      "archived": false,
+      "license_spdx": "Apache-2.0",
+      "readme_at_revision": "https://github.com/firecracker-microvm/firecracker/blob/ab198c7aa1f72cb30541165c20be27dbd1b88c2e/README.md"
+    }
+  ],
+  "pinned_opensandbox_revision": "62a64f0b48cdd6b410f36e53c74dc7559c87719a",
+  "pinned_sources": [
+    {
+      "path": "server/configuration.md",
+      "sha256": "01ceda7ad68bc0889cfef06f78e5939e2c4ab1119a0ac07b903f0550af6d47b2",
+      "url": "https://github.com/opensandbox-group/OpenSandbox/blob/62a64f0b48cdd6b410f36e53c74dc7559c87719a/server/configuration.md"
+    },
+    {
+      "path": "server/opensandbox_server/api/schema.py",
+      "sha256": "ca3cee22bb34b9bda3f1a317f80853fd743879608cfcffa0747e1b2865bfe909",
+      "url": "https://github.com/opensandbox-group/OpenSandbox/blob/62a64f0b48cdd6b410f36e53c74dc7559c87719a/server/opensandbox_server/api/schema.py"
+    },
+    {
+      "path": "server/opensandbox_server/services/docker/docker_service.py",
+      "sha256": "b1ca676becc1c778cb96a5e748cfc9eff40778a00e640be9f0b6656d8f13f31e",
+      "url": "https://github.com/opensandbox-group/OpenSandbox/blob/62a64f0b48cdd6b410f36e53c74dc7559c87719a/server/opensandbox_server/services/docker/docker_service.py"
+    },
+    {
+      "path": "server/opensandbox_server/services/docker/snapshot_runtime.py",
+      "sha256": "728b099a9287d1fe183a05925e50b35b7f79332f7c4eb38f4f0be9eb05a10a1b",
+      "url": "https://github.com/opensandbox-group/OpenSandbox/blob/62a64f0b48cdd6b410f36e53c74dc7559c87719a/server/opensandbox_server/services/docker/snapshot_runtime.py"
+    },
+    {
+      "path": "sdks/sandbox/go/lifecycle.go",
+      "sha256": "cf637f44511560c71d36d6d0ca0076fffe497d2b4f6429a95e8b4c53b2a0e5aa",
+      "url": "https://github.com/opensandbox-group/OpenSandbox/blob/62a64f0b48cdd6b410f36e53c74dc7559c87719a/sdks/sandbox/go/lifecycle.go"
+    },
+    {
+      "path": "docs/guides/secure-container.md",
+      "sha256": "76bda2cb07bef98d55cd08feb9c926109143f4a7ffcbd6bf5e9559cf56841238",
+      "url": "https://github.com/opensandbox-group/OpenSandbox/blob/62a64f0b48cdd6b410f36e53c74dc7559c87719a/docs/guides/secure-container.md"
+    },
+    {
+      "path": "docs/architecture/network/egress.md",
+      "sha256": "464dec22ee678f4ee4c451256f8cb934d1d3238fc9f5fd59bd3706aa337ca7c7",
+      "url": "https://github.com/opensandbox-group/OpenSandbox/blob/62a64f0b48cdd6b410f36e53c74dc7559c87719a/docs/architecture/network/egress.md"
+    }
+  ],
+  "unverified_runtimes": [
+    "E2B deployment",
+    "Daytona service",
+    "gVisor",
+    "Kata",
+    "Firecracker"
+  ],
+  "additional_official_sources": [
+    {
+      "url": "https://github.com/kata-containers/kata-containers",
+      "purpose": "VM-container runtime architecture and host requirements; no deployment test"
+    },
+    {
+      "url": "https://www.daytona.io/docs/en/go-sdk/",
+      "purpose": "current Go SDK entry point; distinct from archived server source"
+    },
+    {
+      "url": "https://docs.e2b.dev/network/internet-access",
+      "purpose": "documented outbound controls; no provider verification"
+    },
+    {
+      "url": "https://docs.e2b.dev/sandbox/persistence",
+      "purpose": "documented memory/filesystem persistence; no provider verification"
+    }
+  ]
+}

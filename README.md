@@ -76,3 +76,5 @@ GOAGENT_CODING_DOCKER_IMAGE=alpine:3 go test -run Docker ./tools/coding
 - 文件系统协调与发布边界以所用 GoAgent 版本的 `harness/env` 契约为准。
 
 采用 Apache-2.0 许可证，见 [LICENSE](LICENSE)。
+
+Sandbox 补充资料：[API参考](docs/reference/SANDBOX_API.md)、[场景指南](docs/guides/SANDBOX_SCENARIOS.md)、[能力与选型调研](docs/research/2026-11-01-sandbox-capabilities.md)、[后续路线图](docs/design/SANDBOX_ROADMAP.md)、[调研实测](docs/evaluation/2026-11-01-sandbox-research/REPORT.md)。路线图中的新能力尚未实现。

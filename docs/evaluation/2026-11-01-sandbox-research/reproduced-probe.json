@@ -1,0 +1,86 @@
+{
+  "comparison_poll_5ms": {
+    "command_python_print": {
+      "http_requests": 99,
+      "samples": 4,
+      "p50_ms": 145.333,
+      "p95_ms": 158.385,
+      "min_ms": 141.364,
+      "max_ms": 158.385
+    },
+    "read_17_bytes": {
+      "http_requests": 142,
+      "samples": 8,
+      "p50_ms": 98.035,
+      "p95_ms": 111.555,
+      "min_ms": 95.928,
+      "max_ms": 111.555
+    }
+  },
+  "create_ready_ms": 320.977,
+  "data_survives_pause_resume": true,
+  "destroy_confirmed_by_api": true,
+  "observed_host_config": {
+    "NanoCpus": 500000000,
+    "Memory": 268435456,
+    "PidsLimit": 256,
+    "Runtime": "runc",
+    "NetworkMode": "bridge",
+    "ReadonlyRootfs": false
+  },
+  "recorded_at": "2026-11-01T03:04:26Z",
+  "sample_scope": "single local Docker fixture; warmed images; sequential descriptive samples; not a throughput or security benchmark",
+  "sandbox_id": "4fb07265-226a-4a68-a6e8-f576b5e876b3",
+  "schema": 1,
+  "sdk_pause_state": "Paused",
+  "sdk_renew_extends_expiration": true,
+  "sdk_resume_state": "Running",
+  "short_ttl": {
+    "environment_returned": false,
+    "new_accepted": true,
+    "remote_status": 422,
+    "requested_seconds": 30
+  },
+  "timings": {
+    "command_python_print": {
+      "http_requests": 64,
+      "samples": 4,
+      "p50_ms": 264.083,
+      "p95_ms": 272.877,
+      "min_ms": 258.77,
+      "max_ms": 272.877
+    },
+    "read_17_bytes": {
+      "http_requests": 72,
+      "samples": 8,
+      "p50_ms": 133.229,
+      "p95_ms": 160.075,
+      "min_ms": 132.769,
+      "max_ms": 160.075
+    },
+    "resolve": {
+      "http_requests": 72,
+      "samples": 8,
+      "p50_ms": 138.71,
+      "p95_ms": 157.706,
+      "min_ms": 136.796,
+      "max_ms": 157.706
+    },
+    "stat": {
+      "http_requests": 74,
+      "samples": 8,
+      "p50_ms": 133.796,
+      "p95_ms": 194.025,
+      "min_ms": 132.143,
+      "max_ms": 194.025
+    },
+    "write_17_bytes": {
+      "http_requests": 74,
+      "samples": 8,
+      "p50_ms": 133.729,
+      "p95_ms": 195.556,
+      "min_ms": 132.159,
+      "max_ms": 195.556
+    }
+  }
+}

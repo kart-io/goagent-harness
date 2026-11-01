@@ -77,3 +77,7 @@ WriteIntent.CreateIfAbsent/IfVersion与写入通过沙盒内flock协调所有辅
 6. 完整race/vet/lint、独立最终审阅一次；重要发现一次TDD修复，记录未覆盖的边界。
 
 本轮仅本地提交新分支，不自动发布、合并或推送。供应商API资料以固定上游源码为准，网页访问失败时已使用官方Git仓库固定版本核对。
+
+## 后续调研与扩展
+
+当前接口签名和配置范围见[API参考](../reference/SANDBOX_API.md)；[补充调研](../research/2026-11-01-sandbox-capabilities.md)区分上游、适配与实测能力，[路线图](SANDBOX_ROADMAP.md)列出持久台账、可选生命周期、批量文件/产物、网络profile和强隔离的依赖与验收。本页已实现契约不因提案出现而自动扩展。

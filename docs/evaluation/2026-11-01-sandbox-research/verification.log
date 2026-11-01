@@ -1,0 +1,9 @@
+Local Markdown links: 69 checked, 0 missing (final).
+Python syntax: PASS, no pycache written.
+Invalid --probe: exit 2 before Docker setup.
+Documented reproduce.py entry point: PASS /tmp/harness-sandbox-research-reproduce.
+Short TTL: local accepted, remote422, Environment=nil.
+Native SDK renewal and pause/resume: PASS.
+Original real Docker/preset tests and coding/workflow examples: PASS.
+Probe runtime: runc/bridge; strong runtime and network denial not tested.
+No production Go sources or module dependencies changed in this research update.

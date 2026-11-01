@@ -1,0 +1,258 @@
+// Research probe, invoked through scripts/verify-sandbox.py --probe.
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	sdk "github.com/alibaba/OpenSandbox/sdks/sandbox/go"
+	"github.com/kart-io/goagent-harness/sandbox"
+	opensandbox "github.com/kart-io/goagent-harness/sandbox/opensandbox"
+	"github.com/kart-io/goagent/harness/env"
+	"net/http"
+	"os"
+	"os/exec"
+	"sort"
+	"sync/atomic"
+	"time"
+)
+
+type countedTransport struct {
+	base  http.RoundTripper
+	count *atomic.Int64
+}
+
+func (t countedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	t.count.Add(1)
+	return t.base.RoundTrip(r)
+}
+
+type timing struct {
+	Requests int64   `json:"http_requests"`
+	Samples  int     `json:"samples"`
+	P50      float64 `json:"p50_ms"`
+	P95      float64 `json:"p95_ms"`
+	Minimum  float64 `json:"min_ms"`
+	Maximum  float64 `json:"max_ms"`
+}
+
+func measure(counter *atomic.Int64, n int, operation func() error) (timing, error) {
+	if err := operation(); err != nil {
+		return timing{}, err
+	} // One untimed warm-up.
+	before := counter.Load()
+	samples := make([]float64, 0, n)
+	for i := 0; i < n; i++ {
+		start := time.Now()
+		if err := operation(); err != nil {
+			return timing{}, err
+		}
+		samples = append(samples, float64(time.Since(start).Microseconds())/1000)
+	}
+	sort.Float64s(samples)
+	p95 := (95*n+99)/100 - 1
+	return timing{counter.Load() - before, n, samples[(n-1)/2], samples[p95], samples[0], samples[n-1]}, nil
+}
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+func run() (err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	domain, key, image := os.Getenv("HARNESS_SANDBOX_DOMAIN"), os.Getenv("HARNESS_SANDBOX_API_KEY"), os.Getenv("HARNESS_SANDBOX_IMAGE")
+	if domain == "" || image == "" {
+		return errors.New("use isolated verification fixture")
+	}
+	options := opensandbox.Options{ExecdImage: opensandbox.SupportedExecdImage, Connection: sdk.ConnectionConfig{Domain: domain, Protocol: "http", APIKey: key, UseServerProxy: true}}
+	var counter atomic.Int64
+	options.Connection.HTTPClient = &http.Client{Transport: countedTransport{http.DefaultTransport, &counter}}
+	report := map[string]interface{}{"schema": 1, "recorded_at": time.Now().UTC().Format(time.RFC3339), "sample_scope": "single local Docker fixture; warmed images; sequential descriptive samples; not a throughput or security benchmark"}
+	short := options
+	short.TTL = 30 * time.Second
+	shortProvider, localErr := opensandbox.New(short)
+	shortResult := map[string]interface{}{"requested_seconds": 30, "new_accepted": localErr == nil}
+	if localErr != nil {
+		return localErr
+	}
+	rejected, createErr := shortProvider.Create(ctx, request(image, "short-ttl"))
+	if rejected != nil {
+		defer func() {
+			clean, c := context.WithTimeout(context.Background(), 10*time.Second)
+			defer c()
+			err = errors.Join(err, rejected.Destroy(clean))
+		}()
+	}
+	var api *sdk.APIError
+	shortResult["environment_returned"] = rejected != nil
+	shortResult["remote_status"] = 0
+	if errors.As(createErr, &api) {
+		shortResult["remote_status"] = api.StatusCode
+	}
+	report["short_ttl"] = shortResult
+	if createErr == nil || !errors.As(createErr, &api) || api.StatusCode != 422 || rejected != nil {
+		return fmt.Errorf("TTL contract changed: %v", createErr)
+	}
+	p, err := opensandbox.New(options)
+	if err != nil {
+		return err
+	}
+	start := time.Now()
+	e, err := p.Create(ctx, request(image, "research"))
+	if e != nil {
+		defer func() {
+			clean, c := context.WithTimeout(context.Background(), 10*time.Second)
+			defer c()
+			err = errors.Join(err, e.Destroy(clean), e.Close(clean))
+		}()
+	}
+	if err != nil {
+		return err
+	}
+	report["sandbox_id"] = e.ID()
+	report["create_ready_ms"] = float64(time.Since(start).Microseconds()) / 1000
+	// Inspect only selected runtime fields; do not archive environment or mounts.
+	inspection, err := exec.CommandContext(ctx, "docker", "inspect", "--format", "{{json .HostConfig}}", "sandbox-"+e.ID()).Output()
+	if err != nil {
+		return err
+	}
+	var host struct {
+		NanoCpus       int64  `json:"NanoCpus"`
+		Memory         int64  `json:"Memory"`
+		PidsLimit      *int64 `json:"PidsLimit"`
+		Runtime        string `json:"Runtime"`
+		NetworkMode    string `json:"NetworkMode"`
+		ReadonlyRootfs bool   `json:"ReadonlyRootfs"`
+	}
+	if err = json.Unmarshal(inspection, &host); err != nil {
+		return err
+	}
+	report["observed_host_config"] = host
+	f := e.FileSystem()
+	data := []byte("research payload\n")
+	if _, err = f.WriteFile(ctx, "input.txt", data, env.WriteIntent{}); err != nil {
+		return err
+	}
+	timings := map[string]timing{}
+	operations := []struct {
+		name string
+		n    int
+		run  func() error
+	}{
+		{"resolve", 8, func() error { _, err := f.Resolve("input.txt"); return err }},
+		{"stat", 8, func() error { _, err := f.Stat(ctx, "input.txt"); return err }},
+		{"read_17_bytes", 8, func() error {
+			b, _, err := f.ReadFile(ctx, "input.txt")
+			if err == nil && string(b) != string(data) {
+				return errors.New("read differs")
+			}
+			return err
+		}},
+		{"write_17_bytes", 8, func() error { _, err := f.WriteFile(ctx, "input.txt", data, env.WriteIntent{}); return err }},
+		{"command_python_print", 4, func() error {
+			result, err := e.Executor().Run(ctx, env.Command{Argv: []string{"python3", "-c", "print('ok')"}})
+			if err == nil && result.ExitCode != 0 {
+				return fmt.Errorf("command exit %d", result.ExitCode)
+			}
+			return err
+		}},
+	}
+	for _, operation := range operations {
+		sample, err := measure(&counter, operation.n, operation.run)
+		if err != nil {
+			return fmt.Errorf("%s: %w", operation.name, err)
+		}
+		timings[operation.name] = sample
+	}
+	report["timings"] = timings
+	fastOptions := options
+	fastOptions.PollInterval = 5 * time.Millisecond
+	fastProvider, err := opensandbox.New(fastOptions)
+	if err != nil {
+		return err
+	}
+	fast, err := fastProvider.Connect(ctx, e.ID(), request(image, "research"))
+	if err != nil {
+		return err
+	}
+	fastTimings := map[string]timing{}
+	fastTimings["read_17_bytes"], err = measure(&counter, 8, func() error {
+		b, _, err := fast.FileSystem().ReadFile(ctx, "input.txt")
+		if err == nil && string(b) != string(data) {
+			return errors.New("fast read differs")
+		}
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	fastTimings["command_python_print"], err = measure(&counter, 4, func() error {
+		r, err := fast.Executor().Run(ctx, env.Command{Argv: []string{"python3", "-c", "print('ok')"}})
+		if err == nil && r.ExitCode != 0 {
+			return fmt.Errorf("fast command exit %d", r.ExitCode)
+		}
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	report["comparison_poll_5ms"] = fastTimings
+	if err = fast.Close(ctx); err != nil {
+		return err
+	}
+
+	lifecycle := sdk.NewLifecycleClientWithCache("http://"+domain+"/v1", key, nil, sdk.WithTimeout(5*time.Second))
+	before, err := lifecycle.GetSandbox(ctx, e.ID())
+	if err != nil {
+		return err
+	}
+	if before.ExpiresAt == nil {
+		return errors.New("created instance has no TTL")
+	}
+	renewed, err := lifecycle.RenewExpiration(ctx, e.ID(), before.ExpiresAt.Add(time.Minute))
+	if err != nil {
+		return err
+	}
+	report["sdk_renew_extends_expiration"] = renewed.ExpiresAt.After(*before.ExpiresAt)
+	if err = lifecycle.PauseSandbox(ctx, e.ID()); err != nil {
+		return err
+	}
+	paused, err := lifecycle.GetSandbox(ctx, e.ID())
+	if err != nil {
+		return err
+	}
+	report["sdk_pause_state"] = paused.Status.State
+	if err = lifecycle.ResumeSandbox(ctx, e.ID()); err != nil {
+		return err
+	}
+	resumed, err := lifecycle.GetSandbox(ctx, e.ID())
+	if err != nil {
+		return err
+	}
+	report["sdk_resume_state"] = resumed.Status.State
+	b, _, err := f.ReadFile(ctx, "input.txt")
+	if err != nil {
+		return err
+	}
+	report["data_survives_pause_resume"] = string(b) == string(data)
+	if paused.Status.State != sdk.StatePaused || resumed.Status.State != sdk.StateRunning || string(b) != string(data) {
+		return errors.New("pause/resume contract differs")
+	}
+	if err = e.Destroy(ctx); err != nil {
+		return err
+	}
+	if err = e.Close(ctx); err != nil {
+		return err
+	}
+	report["destroy_confirmed_by_api"] = true
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(report)
+}
+
+func request(image, scope string) sandbox.Request {
+	return sandbox.Request{Provider: "opensandbox", Scope: scope, Image: image, Network: true}
+}
