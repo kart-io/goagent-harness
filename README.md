@@ -17,6 +17,8 @@ GoAgent 提供模型与工具循环、类型化工作流、持久恢复、预算
 | `preset` | 配置加载、分层合并、组件装配、策略与沙箱校验、装配清单 |
 | `tools/coding` | 工作区读写编辑、检索、命令、Git、待办 |
 | `integration` | 通过公开 API 验证 Harness 与 GoAgent 持久图、审批和工具执行的组合 |
+| `sandbox` | 文件策略、命名目录范围与 Docker / 本机 OS 执行适配器 |
+| `permissions` | Agent 会话权限、单次提权、角色模板与父子权限交集 |
 | `examples/coding-agent` | 配置驱动的编码修复案例 |
 | `examples/plan-agent` | 计划模式、钩子、压缩和运行中交互案例 |
 
@@ -45,6 +47,44 @@ output, err := agent.AsRunnable().Invoke(ctx, "完成任务")
 ```
 
 配置格式、组件及生命周期见 [Preset 文档](preset/README.md)。宿主负责选择模型、会话 ID、预算、审批通道和持久化作用域；需要恢复时使用稳定执行键并核对 `Assembly.PinManifest`。
+
+## 沙盒与 Agent 权限
+
+沙盒采用 DSH 的策略与执行分层：文件模式、目录范围、网络策略独立表达；工具规则与人的审批不能越过宿主上限。
+默认仍使用 Docker，并保持 `network: false`。选择 `executor: native` 可使用 macOS Seatbelt 或 Linux Bubblewrap。
+后端不可用或不能兑现策略时拒绝执行，不自动回退到无限制的本机执行。
+
+```yaml
+presets:
+  - id: coder
+    components:
+      - id: workspace
+        use: workspace
+        config:
+          executor: native
+          sandbox: read-only
+          maxSandbox: workspace-write
+          network: false
+      - {id: tools, use: coding-tools}
+      - {id: permissions, use: permissions, config: {role: coder}}
+```
+
+`maxSandbox` 默认等于 `sandbox`，须显式配置才允许提权到更宽的模式。模型通过 `sandbox_permissions` 与 `justification` 请求一次具体调用的批准；不会改变整个会话。
+宿主通过 `Assembly.Permissions.SetSession` 切换会话模式，通过 `Host.SessionStore` 持久化模式与版本，通过 `Host.SandboxCeiling` 设置审批也不能越过的硬上限。
+每次模型请求附带当前策略事实；工具执行时仍会重新校验。
+
+角色模板有 reader/reviewer、coder、coordinator、publisher；角色只贡献工具规则，不授予系统身份或外部服务权限。
+普通子 Agent 受父 Agent 当前策略约束；只读 coordinator 如需调度可写 worker，应由宿主创建独立 worker。
+
+无需模型或 API key 即可验证单次授权：
+
+```bash
+go run ./examples/sandbox-permissions -approve
+```
+
+预期依次输出 `first: success=false`、`approved: success=true`、`last: success=false`，临时演示文件在退出时清理。
+本机沙盒主要限制文件修改和请求的网络行为，不保证宿主文件保密；它不隔离 Harness 本身、任意 Go 插件、MCP 服务或命令钩子。
+Windows native 与 Landlock 尚未实现。平台验证范围和剩余限制见 [sandbox](sandbox/README.md)，授权与恢复契约见 [permissions](permissions/README.md)。
 
 ## 验证
 

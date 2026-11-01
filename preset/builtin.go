@@ -94,8 +94,8 @@ var instructionsSpec = Spec[InstructionsConfig]{
 }
 
 // WorkspaceConfig 是 workspace 组件的配置。沙箱模式是对执行环境的要求，执行器做不到时 Build 失败：
-// read-only 下文件系统只读，命令只能在以只读方式挂载工作区的容器中执行，否则不提供命令工具；
-// workspace-write 下命令只能在容器中执行；danger-full-access 允许在宿主机执行。
+// read-only 与 workspace-write 由 Docker 或 native 后端兑现；legacy local 只读模式不提供命令。
+// danger-full-access 允许不隔离的 local 执行，但仍须明确声明网络能力。
 type WorkspaceConfig struct {
 	// Sandbox 默认 workspace-write。
 	Sandbox Sandbox `yaml:"sandbox"`
@@ -105,7 +105,7 @@ type WorkspaceConfig struct {
 	AdditionalWritableRoots []string `yaml:"additionalWritableRoots"`
 	// EnvAllowlist permits named host environment variables in command subprocesses.
 	EnvAllowlist []string `yaml:"envAllowlist"`
-	// Executor 为 docker（默认）或 local。
+	// Executor 为 docker（默认）、native 或不隔离的 local。
 	Executor string `yaml:"executor"`
 	// Image 是 docker 执行器的镜像。
 	Image string `yaml:"image"`

@@ -63,7 +63,7 @@ presets:
 不可信层中的下列内容是**扩权项**，`Build` 返回 `*TrustRequiredError`，经 `TrustStore.Grant` 授权后才生效：
 
 - 超出 `limits` 的沙箱模式、执行器、镜像、联网、宿主进程、秘密引用；
-- `allow` 规则、`base: coding`、`sessionTools`；
+- `allow` 规则、`base: coding`、`sessionTools`、角色模板、额外可写目录与环境变量传递；
 - 替换或删除来自可信层的组件（可信层可用 `locked: true` 直接禁止）。
 
 新增 `deny`/`ask` 规则、降低沙箱模式、删除自己层的组件无需授权。授权绑定项目根目录与扩权项（含所在组件的完整配置）的摘要，配置变化后需重新授权。
@@ -74,9 +74,9 @@ presets:
 |---|---|---|
 | `persona` | `prompt` | 一段系统提示词 |
 | `instructions` | `files`（默认 AGENTS.md、CLAUDE.md）、`maxBytes`（默认 32768） | 读取工作区内的项目说明，依赖 `workspace` |
-| `workspace` | `sandbox`、`executor`（docker/local）、`image`、`network`、`commandTimeout`、`maxOutputBytes`、`linters` | 单例。沙箱模式是硬性要求，见下表 |
+| `workspace` | `sandbox`、`maxSandbox`、`executor`（docker/local/native）、`image`、`network`、`additionalWritableRoots`、`envAllowlist`、`commandTimeout`、`maxOutputBytes`、`linters` | 单例。沙箱模式是硬性要求，见下表 |
 | `coding-tools` | `tools`（缺省为沙箱下可用的全部） | 依赖 `workspace`；列出不可用的工具时 Build 失败 |
-| `permissions` | `approval`（ask/never）、`base`（coding）、`rules`、`sessionTools` | 可多行，全部规则合并为一个策略，按 Deny > Ask > Allow 取最严格者 |
+| `permissions` | `approval`（ask/never）、`role`、`base`（coding）、`rules`、`sessionTools` | 可多行，全部规则合并为一个策略，按 Deny > Ask > Allow 取最严格者 |
 | `spill` | `maxBytes`（默认 100000）、`retention`（默认 168h） | 超长结果写入 `Host.ArtifactDir`，提供 `read_spill` |
 | `mcp` | `transport`（stdio/streamable-http）、`command`、`args`、`env`、`url`、`headers`、`tools`、`aliases`、`startupTimeout`（默认 30s） | 可多行，见下文 |
 | `claude-code-hooks` | `path`、`hooks`、`toolNames`、`timeout`（默认 60s） | 单例。Claude Code 命令钩子，见下文 |
@@ -87,11 +87,46 @@ presets:
 
 | 沙箱模式 | 文件工具 | 命令（含 git、lint） |
 |---|---|---|
-| `read-only` | 只读，不提供写入类工具 | 只在以只读方式挂载工作区的容器中执行，否则不提供 |
-| `workspace-write` | 写入限于工作区 | 必须在容器中执行，本地执行器 Build 失败 |
+| `read-only` | 拒绝写入；若 maxSandbox 允许提权则仍提供写入工具供单次请求批准 | Docker 只读挂载或 native OS 约束；legacy local 不提供命令 |
+| `workspace-write` | 写入限于工作区和显式命名的额外目录 | Docker 或 native；不隔离的 local 执行器 Build 失败 |
 | `danger-full-access` | 写入限于工作区 | 可在宿主机执行 |
 
 执行器的网络能力必须与 `network` 一致（本地执行器总能联网，须写 `network: true`），做不到即 Build 失败，不静默降级。
+
+`maxSandbox` 默认等于 `sandbox`，规定人可以批准的最高文件模式；网络和目录不会随模式自动扩大。
+额外目录填写物理绝对路径；文件工具通过 `@root1/path` 等相对范围访问，命令使用执行端路径（Docker 主工作区为 `/workspace`）。
+native 的文件读取仍受宿主账户权限影响，不承诺凭据保密；文件工具继续保留显式路径范围。
+选择 native 时 Build 实际探测后端；Docker 为兼容现有装配流程，在 Run 前探测，未启动时 manifest 标记 `unverified`。
+因此 Build 成功本身不能作为 Docker 当前可用的证据。两种后端执行前都会重新检查。
+
+宿主权限 API：
+
+```go
+asm, err := preset.Build(ctx, p, preset.Host{
+    Root: root,
+    AgentID: "coding-worker",       // 稳定可信身份；默认 preset id
+    Approver: approver,
+    SessionStore: sessionStore,      // 可选；持久保存 mode/revision，不保存审批
+    SandboxCeiling: &hostCeiling,    // 可选；批准与项目 trust 均不能越过
+})
+if err != nil { return err }
+defer asm.Close()
+err = asm.Permissions.SetSession(ctx, "session-1", sandbox.ReadOnly)
+```
+
+无 workspace 时 `Assembly.Permissions` 为 nil；调用前须检查。`SetSession` 仅供宿主使用，不能注册为模型工具。
+每次模式切换递增版本，令尚未开始执行的旧批准失效。单次提权参数须成对提供 `sandbox_permissions` 和 `justification`，
+并有宿主提供的 SessionID / CallID；批准绑定调用与策略版本，不提供整个会话的提权。
+`approval: never` 同样拒绝沙盒提权，工具的 allow 规则不能覆盖这一限制。
+
+| 角色模板 | 默认工具规则 |
+|---|---|
+| reader / reviewer / coordinator | 允许读取与检索；禁止编辑、命令和 Git 子进程 |
+| coder | 允许文件编辑；命令和 Git 需审批；禁止模板中声明的发布动作 |
+| publisher | 发布、推送、消息等仍需宿主审批；不自动授予外部资源范围 |
+
+角色模板对未匹配的工具仍遵循默认 ask，不能替代外部服务的资源授权。
+Git 读取工具也可通过仓库配置或辅助程序执行子进程，所以只读角色不会默认放行它们。
 
 宿主基线：没有任何规则匹配的调用需要审批；`approval: never` 时 Ask 自动拒绝；未提供 `Approver` 时 Ask 的结果为 Unavailable，同样按拒绝处理。
 
@@ -141,7 +176,7 @@ presets:
 ```
 
 - 子 Agent 与父 Agent 一同装配，由宿主的 `Host.RunAgent` 运行（`preset.BuilderRunner(client, maxIterations)` 用 builder 运行）。
-- 权限取交集：子 Agent 的每次调用先经过父 Agent 的调用前钩子与守卫（含父 Agent 的权限规则），沙箱模式不得宽于父 Agent，父 Agent 的 `approval: never` 同样适用。
+- 权限取交集：子 Agent 的每次调用先经过父 Agent 的调用前钩子与守卫（含父 Agent 的权限规则），模式、目录与网络和环境变量传递不得超过父 Agent；实时会话策略和祖先版本也会校验，父 Agent 的 `approval: never` 同样适用。
 - `toolFilter` 在初始化之前生效：被完全过滤掉的组件（如允许列表中没有其工具的 MCP 服务）不初始化。允许列表引用不存在的工具时 Build 失败。
 - preset 引用有环时 Load 失败；嵌套深度超过 `maxDepth` 时 Build 失败。关闭父 Agent 同时关闭子 Agent。
 - 子 Agent 不写持久日志：父 Agent 的日志记录整次委派，中断的委派按父调用的策略整体重跑。
