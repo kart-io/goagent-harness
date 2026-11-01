@@ -1,0 +1,9 @@
+=== RUN   TestRealDockerLifecycleAndWorkspace
+    integration_test.go:39: owned sandbox 7e7e5b98-59eb-465d-8697-0a2b912c98bc
+    integration_test.go:107: independent sandbox fafb3083-f5ae-4d74-949b-e3c8f0da3eba
+--- PASS: TestRealDockerLifecycleAndWorkspace (4.32s)
+=== RUN   TestRealDockerPresetAssembly
+    integration_test.go:130: preset sandbox 5be0d43e-ad58-492d-a7af-74726338a5cd
+--- PASS: TestRealDockerPresetAssembly (2.01s)
+PASS
+ok  	github.com/kart-io/goagent-harness/sandbox/opensandbox	7.854s

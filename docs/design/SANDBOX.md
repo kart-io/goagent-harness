@@ -1,6 +1,6 @@
 # Sandbox 接入设计与功能契约
 
-状态：用户已授权实施。2026-11-01。Harness使用GoAgent v0.32.2；不修改GoAgent执行内核。首个可选后端为OpenSandbox，固定release-1.2.0（62a64f0b48cdd6b410f36e53c74dc7559c87719a），server/SDK/execd成套验证。
+状态：实现与验证中。2026-11-01。Harness使用GoAgent v0.32.2；不修改GoAgent执行内核。首个可选后端为OpenSandbox，固定release-1.2.0（62a64f0b48cdd6b410f36e53c74dc7559c87719a），server/SDK/execd成套验证。
 
 ## 职责与功能
 
@@ -49,10 +49,10 @@ config:
 ## OpenSandbox首期边界
 
 - 独立模块导入官方Go SDK的实际模块路径github.com/alibaba/OpenSandbox/sdks/sandbox/go，根模块不直接依赖SDK。
-- 首期明确支持已验证的Docker服务后端、Linux沙盒镜像。镜像须有python3，初始化实际探测，缺少即失败。已有server镜像中python3可用于本地验证；业务镜像由宿主指定。
+- 首期明确支持已验证的Docker服务后端、Linux沙盒镜像。镜像须有python3和sleep infinity，初始化实际探测，缺少即失败。已有server镜像中python3可用于本地验证；业务镜像由宿主指定。
 - 工作区默认/workspace/goagent，根目录由可信Provider配置指定；不自动上传本地项目。文件上传可用FS，产物由调用者读回。
 - 首期只支持网络可用配置；network=false在创建前明确拒绝，不声明未经验证的出站阻断。网络策略/微VM/Kubernetes支持需单独验收。
-- Create设置TTL（默认10分钟）和可信版本/Scope元数据；Connect核对元数据与配置，不将任意外部沙盒伪装为本适配器实例。
+- Create设置TTL（默认10分钟）和可信版本/Scope元数据（Root/Scope/Image使用无padding base32 SHA256以适配63字符标签，实际镜像额外核对）；Connect核对元数据与配置，不将任意外部沙盒伪装为本适配器实例。
 - Native Argv不拼接shell；Dir必须在工作区。使用异步命令ID及状态/日志接口，非零退出码返回Result,nil；启动/传输/取消失败返回error。
 - 命令输出有上限，RPC响应也有边界。达到上限或context取消时使用独立清理context发送Interrupt，并查询停止状态；不能确认时返回带sandbox/command身份的可识别未确认错误，不自动重新执行。
 - 进程状态验证不承诺逃离进程组的所有后代都被清理；owned实例在最终关闭时销毁，borrowed实例由其所有者管理。

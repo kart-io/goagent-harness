@@ -6,7 +6,7 @@ GoAgent 提供模型与工具循环、类型化工作流、持久恢复、预算
 
 ## 模块与版本
 
-模块路径：`github.com/kart-io/goagent-harness`；Go 1.25 及以上；GoAgent 基线为 **v0.23.0**。
+模块路径：`github.com/kart-io/goagent-harness`；Go 1.25 及以上；GoAgent 基线为 **v0.32.2**。
 本仓库由 GoAgent 拆出，源码位于 [kart-io/goagent-harness](https://github.com/kart-io/goagent-harness)，默认分支为 `main`。当前尚未发布版本标签，可克隆仓库运行测试与示例。
 迁移来源与导入路径对照见 [迁移指南](docs/MIGRATION.md) 和 [NOTICE](NOTICE)。
 
@@ -15,6 +15,8 @@ GoAgent 提供模型与工具循环、类型化工作流、持久恢复、预算
 | 路径 | 职责 |
 |---|---|
 | `preset` | 配置加载、分层合并、组件装配、策略与沙箱校验、装配清单 |
+| `sandbox` | 可替换远端环境、受管会话与任务级资源回收 |
+| `sandbox/opensandbox` | 独立模块：OpenSandbox 命令、完整远端文件系统与案例 |
 | `tools/coding` | 工作区读写编辑、检索、命令、Git、待办 |
 | `integration` | 通过公开 API 验证 Harness 与 GoAgent 持久图、审批和工具执行的组合 |
 | `examples/coding-agent` | 配置驱动的编码修复案例 |
@@ -45,6 +47,8 @@ output, err := agent.AsRunnable().Invoke(ctx, "完成任务")
 ```
 
 配置格式、组件及生命周期见 [Preset 文档](preset/README.md)。宿主负责选择模型、会话 ID、预算、审批通道和持久化作用域；需要恢复时使用稳定执行键并核对 `Assembly.PinManifest`。
+
+远端环境接入、Preset 配置、所有权/恢复及可运行案例见 [Sandbox 指南](docs/guides/SANDBOX.md)，职责边界见 [Sandbox 设计](docs/design/SANDBOX.md)。
 
 ## 验证
 

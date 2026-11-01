@@ -29,9 +29,9 @@ func localFilesystem(t *testing.T, maxFile int64, maxEntries int) (*fileSystem, 
 		if err != nil {
 			return nil, err
 		}
-		defer os.Remove(temp.Name())
+		defer func() { _ = os.Remove(temp.Name()) }()
 		if _, err = temp.Write(data); err != nil {
-			temp.Close()
+			_ = temp.Close()
 			return nil, err
 		}
 		if err = temp.Close(); err != nil {

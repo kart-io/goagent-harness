@@ -216,3 +216,7 @@ func init() {
 ```bash
 go test ./preset/ ./integration/
 ```
+
+## 远端 Sandbox Provider
+
+`workspace.config.executor: sandbox` 通过宿主 `Host.Sandboxes` 选择命名 Provider；配置还需 `provider`、`image`、`network`。命令和文件绑定同一个远端实例，Host.Root 不会隐式上传或挂载。宿主负责 Registry.Close，包含装配失败和清理重试。子 Agent 默认独立实例，并在分配前校验父级权限与网络上限。恢复必须重连原实例并核对真实 ID 的 Manifest。完整配置、OpenSandbox 边界、实例所有权和代码见 [Sandbox 指南](../docs/guides/SANDBOX.md) 与 [设计文档](../docs/design/SANDBOX.md)。

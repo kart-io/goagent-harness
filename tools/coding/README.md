@@ -82,3 +82,7 @@ go test ./tools/coding/ ./preset/ ./integration/
 # 可选：Docker 测试，镜像需含 sh
 GOAGENT_CODING_DOCKER_IMAGE=alpine:3 go test -run Docker ./tools/coding/
 ```
+
+## 远端 Sandbox
+
+`coding.New(session.FileSystem(), session.Executor())` 可把上述工具整体接入远端工作区。文件路径边界、大小限制与条件写协调由选定 FileSystem 提供；命令生命周期与输出上限由 Executor 提供，因此不能把前述 LocalFS/本地进程约定自动视作所有后端的保证。OpenSandbox 的条件写只协调辅助程序写者，直接命令可绕过；输出超限会中断命令并返回 error。完整功能与差异见 [Sandbox 指南](../../docs/guides/SANDBOX.md)。

@@ -20,7 +20,7 @@ func TestHTTPResponseLimitAndRedirect(t *testing.T) {
 	defer target.Close()
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/redirect" {
-			http.Redirect(w, r, target.URL, 307)
+			http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
 			return
 		}
 		_, _ = io.WriteString(w, strings.Repeat("x", 1024))
@@ -30,7 +30,7 @@ func TestHTTPResponseLimitAndRedirect(t *testing.T) {
 	client := http.Client{Transport: transport}
 	response, err := client.Get(origin.URL)
 	require.NoError(t, err)
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	data, err := io.ReadAll(response.Body)
 	require.ErrorIs(t, err, errResponseLimit)
 	require.LessOrEqual(t, len(data), 17)

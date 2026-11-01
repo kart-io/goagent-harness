@@ -1,0 +1,6 @@
+?   	github.com/kart-io/goagent-harness/examples/coding-agent	[no test files]
+?   	github.com/kart-io/goagent-harness/examples/plan-agent	[no test files]
+ok  	github.com/kart-io/goagent-harness/integration	1.675s
+ok  	github.com/kart-io/goagent-harness/preset	10.748s
+ok  	github.com/kart-io/goagent-harness/sandbox	2.430s
+ok  	github.com/kart-io/goagent-harness/tools/coding	5.985s
