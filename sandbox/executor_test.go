@@ -123,7 +123,7 @@ func TestNativePrivateTempAndNull(t *testing.T) {
 func TestDockerKeepsImagePath(t *testing.T) {
 	bin := t.TempDir()
 	capture := filepath.Join(bin, "capture")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" >> " + shellQuote(capture) + "\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" >> " + shellQuote(capture) + "\nif [ \"$1\" != run ]; then exit 0; fi\nwhile [ \"$1\" != test ]; do shift; done\nshift\nexec \"$@\"\n"
 	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -317,9 +317,9 @@ func main(){if os.Args[1]=="dgram"{pair,e:=syscall.Socketpair(syscall.AF_UNIX,sy
 		}
 	}
 }
-func TestMacUnixSocketInherit(t *testing.T) {
-	if runtime.GOOS != "darwin" {
-		t.Skip("Seatbelt Unix pathname rule")
+func TestNativeUnixSocketInherit(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("requires Seatbelt or Bubblewrap")
 	}
 	python, err := exec.LookPath("python3")
 	if err != nil {
@@ -362,8 +362,8 @@ func TestMacUnixSocketInherit(t *testing.T) {
 		}
 	}
 	r, err := e.Run(context.Background(), env.Command{Argv: []string{python, "-c", "import socket; a,b=socket.socketpair(); a.send(b'x'); assert b.recv(1)==b'x'"}})
-	if err != nil || r.ExitCode != 0 {
-		t.Fatalf("anonymous pair failed %s %v", r.Output, err)
+	if err != nil || (r.ExitCode == 0) != (runtime.GOOS == "darwin") {
+		t.Fatalf("anonymous pair policy mismatch on %s: %s %v", runtime.GOOS, r.Output, err)
 	}
 	tcp, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {

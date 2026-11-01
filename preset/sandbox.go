@@ -110,7 +110,7 @@ func buildWorkspace(ctx context.Context, a *Assembler, c *WorkspaceConfig) error
 	}
 	// Change this contract when backend rules change, including the pinned
 	// seccomp profile. Recovery must not silently reuse a different execution boundary.
-	contract := "harness-sandbox-v1;moby-seccomp-sha256=6416b47770785a41ac59073cdc77d9fe98517df2799dc83ef207e622de3053f6"
+	contract := "harness-sandbox-v2;moby-seccomp-sha256=6416b47770785a41ac59073cdc77d9fe98517df2799dc83ef207e622de3053f6"
 	if c.Executor == "native" {
 		contract += ";" + runtime.GOOS + "/" + runtime.GOARCH
 	}

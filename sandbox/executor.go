@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/kart-io/goagent/harness/env"
-	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -144,17 +143,8 @@ func (e *Executor) probe(ctx context.Context, p Policy) (Report, error) {
 			if err != nil {
 				return r, err
 			}
-			defer listener.Close()
-			go func() {
-				for {
-					c, err := listener.Accept()
-					if err != nil {
-						return
-					}
-					io.WriteString(c, "HTTP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n")
-					c.Close()
-				}
-			}()
+			stop := startProbeHTTP(listener)
+			defer stop()
 			curl, err := exec.LookPath("curl")
 			if err != nil {
 				return r, fmt.Errorf("%w: curl probe unavailable", ErrUnavailable)
@@ -208,6 +198,14 @@ func (e *Executor) raw(ctx context.Context, p Policy, c env.Command) (env.Result
 		return env.Result{}, err
 	}
 	argv := append([]string(nil), c.Argv...)
+	var startMarker []byte
+	if e.Backend == "native" || e.Backend == "docker" {
+		var err error
+		argv, startMarker, err = commandStart(argv)
+		if err != nil {
+			return env.Result{}, err
+		}
+	}
 	dir := filepath.Join(p.WorkspaceRoot, c.Dir)
 	var cleanup func()
 	var seccomp *os.File
@@ -344,8 +342,15 @@ func (e *Executor) raw(ctx context.Context, p Policy, c env.Command) (env.Result
 	cmd.Stderr = out
 	err := cmd.Run()
 	res := env.Result{Output: out.bytes()}
+	started := true
+	if startMarker != nil {
+		res.Output, started = removeCommandStart(res.Output, startMarker)
+	}
 	if ctx.Err() != nil {
 		return res, ctx.Err()
+	}
+	if !started {
+		return res, fmt.Errorf("%w: %s runner did not start command: %v: %s", ErrUnavailable, e.Backend, err, res.Output)
 	}
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {
@@ -414,17 +419,8 @@ func (e *Executor) probeUnixSocket(ctx context.Context, p Policy) error {
 	if err != nil {
 		return err
 	}
-	defer listener.Close()
-	go func() {
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			io.WriteString(conn, "HTTP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n")
-			conn.Close()
-		}
-	}()
+	stop := startProbeHTTP(listener)
+	defer stop()
 	curl, err := exec.LookPath("curl")
 	if err != nil {
 		return fmt.Errorf("%w: Unix socket curl probe unavailable", ErrUnavailable)
@@ -432,8 +428,8 @@ func (e *Executor) probeUnixSocket(ctx context.Context, p Policy) error {
 	args := []string{"--noproxy", "*", "--unix-socket", socket, "--max-time", "2", "http://localhost/"}
 	positive := exec.CommandContext(ctx, curl, args...)
 	positive.Env = e.environment()
-	if err := positive.Run(); err != nil {
-		return fmt.Errorf("%w: Unix socket positive control: %v", ErrUnavailable, err)
+	if output, err := positive.CombinedOutput(); err != nil {
+		return fmt.Errorf("%w: Unix socket positive control: %v: %s", ErrUnavailable, err, output)
 	}
 	res, err := e.raw(ctx, p, env.Command{Argv: append([]string{curl}, args...)})
 	if err != nil || res.ExitCode == 0 {
