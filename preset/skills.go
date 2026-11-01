@@ -12,7 +12,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/kart-io/goagent/harness/env"
 	"github.com/kart-io/goagent/interfaces"
 	"github.com/kart-io/goagent/tools"
 	"github.com/kart-io/goagent/tools/policy"
@@ -37,13 +36,14 @@ var skillNamePattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
 // skill 是 Build 时读取的一个技能。
 type skill struct {
-	name, description, body, dir string
-	hidden                       bool
+	name, description, body string
+	root                    *os.Root
+	hidden                  bool
 }
 
 func init() {
 	Register(Spec[SkillsConfig]{
-		Name: ComponentSkills, Version: "1", Singleton: true,
+		Name: ComponentSkills, Version: "2", Singleton: true,
 		Validate: func(c *SkillsConfig) error {
 			if len(c.Dirs) == 0 {
 				c.Dirs = []string{".agents/skills", ".claude/skills"}
@@ -73,11 +73,15 @@ func outsideWorkspace(dir string) bool { return filepath.IsAbs(dir) || strings.H
 func buildSkills(_ context.Context, a *Assembler, c *SkillsConfig) error {
 	var skills []skill
 	for _, d := range c.Dirs {
-		dir, err := skillDir(a.Root(), d)
+		dir, err := openSkillDirectory(a.Root(), d)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
 		if err != nil {
 			return err
 		}
-		found, err := readSkills(dir)
+		found, err := readSkills(dir, a.OnClose)
+		err = errors.Join(err, dir.Close())
 		if err != nil {
 			return err
 		}
@@ -106,37 +110,33 @@ func buildSkills(_ context.Context, a *Assembler, c *SkillsConfig) error {
 	return nil
 }
 
-func skillDir(root, d string) (string, error) {
+// Open relative directories through the workspace handle so even concurrent
+// symlink replacement cannot redirect discovery outside the configured scope.
+func openSkillDirectory(root, d string) (*os.Root, error) {
 	switch {
 	case strings.HasPrefix(d, "~"):
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return "", err
+			return nil, err
 		}
-		return filepath.Join(home, strings.TrimPrefix(d, "~")), nil
+		return os.OpenRoot(filepath.Join(home, strings.TrimPrefix(d, "~")))
 	case filepath.IsAbs(d):
-		return d, nil
+		return os.OpenRoot(d)
 	case root == "":
-		return "", fmt.Errorf("相对技能目录 %s 需要 Host.Root", d)
+		return nil, fmt.Errorf("相对技能目录 %s 需要 Host.Root", d)
 	}
-	// 相对目录须仍在工作区内，经 LocalFS 解析符号链接后检查。
-	local, err := env.NewLocalFS(root)
+	workspace, err := os.OpenRoot(root)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	rel, err := local.Resolve(d)
-	if err != nil {
-		return "", fmt.Errorf("技能目录 %s: %w", d, err)
-	}
-	return filepath.Join(local.Root(), filepath.FromSlash(rel)), nil
+	defer workspace.Close()
+	return workspace.OpenRoot(d)
 }
 
-// readSkills 读取 dir 下每个子目录的 SKILL.md；目录不存在时返回空。
-func readSkills(dir string) ([]skill, error) {
-	entries, err := os.ReadDir(dir)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
+// Each skill retains its directory handle until Assembly.Close. Metadata and
+// references share that same boundary, including after a directory is renamed.
+func readSkills(dir *os.Root, onClose func(func() error)) ([]skill, error) {
+	entries, err := fs.ReadDir(dir.FS(), ".")
 	if err != nil {
 		return nil, err
 	}
@@ -145,14 +145,20 @@ func readSkills(dir string) ([]skill, error) {
 		if !e.IsDir() {
 			continue
 		}
-		path := filepath.Join(dir, e.Name(), "SKILL.md")
-		data, err := os.ReadFile(path)
-		if errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
+		path := filepath.Join(dir.Name(), e.Name(), "SKILL.md")
+		root, err := dir.OpenRoot(e.Name())
 		if err != nil {
 			return nil, err
 		}
+		data, err := root.ReadFile("SKILL.md")
+		if err != nil {
+			closeErr := root.Close()
+			if errors.Is(err, fs.ErrNotExist) && closeErr == nil {
+				continue
+			}
+			return nil, errors.Join(err, closeErr)
+		}
+		onClose(root.Close)
 		s, err := parseSkill(data)
 		if err != nil {
 			return nil, fmt.Errorf("技能 %s: %w", path, err)
@@ -160,7 +166,7 @@ func readSkills(dir string) ([]skill, error) {
 		if s.name != e.Name() {
 			return nil, fmt.Errorf("技能 %s: name %q 与目录名不一致", path, s.name)
 		}
-		s.dir = filepath.Join(dir, e.Name())
+		s.root = root
 		out = append(out, s)
 	}
 	return out, nil
@@ -208,22 +214,27 @@ func loadSkillTool(skills []skill) interfaces.Tool {
 			"additionalProperties": false
 		}`,
 		func(ctx context.Context, input *interfaces.ToolInput) (*interfaces.ToolOutput, error) {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			name, _ := input.Args["name"].(string)
 			i := slices.IndexFunc(skills, func(s skill) bool { return s.name == name })
 			if i < 0 {
 				return tools.Rejected("unknown skill "+name, nil), nil
 			}
 			s := skills[i]
-			local, err := env.NewLocalFS(s.dir)
-			if err != nil {
-				return nil, err
-			}
 			file, _ := input.Args["file"].(string)
 			if file == "" {
 				var files []string
-				err := local.Walk(ctx, ".", func(info env.Info) error {
-					if !info.IsDir() && info.Path != "SKILL.md" {
-						files = append(files, info.Path)
+				err := fs.WalkDir(s.root.FS(), ".", func(path string, entry fs.DirEntry, err error) error {
+					if err != nil {
+						return err
+					}
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+					if !entry.IsDir() && path != "SKILL.md" {
+						files = append(files, path)
 					}
 					return nil
 				})
@@ -232,12 +243,9 @@ func loadSkillTool(skills []skill) interfaces.Tool {
 				}
 				return &interfaces.ToolOutput{Success: true, Result: map[string]any{"name": s.name, "instructions": s.body, "files": files}}, nil
 			}
-			data, _, err := local.ReadFile(ctx, file)
-			if errors.Is(err, fs.ErrNotExist) || errors.Is(err, env.ErrOutsideWorkspace) {
-				return tools.Rejected(fmt.Sprintf("skill %s has no file %s", s.name, file), nil), nil
-			}
+			data, err := s.root.ReadFile(file)
 			if err != nil {
-				return nil, err
+				return tools.Rejected(fmt.Sprintf("skill %s has no file %s: %v", s.name, file, err), nil), nil
 			}
 			return &interfaces.ToolOutput{Success: true, Result: map[string]any{"name": s.name, "file": file, "content": string(data)}}, nil
 		})

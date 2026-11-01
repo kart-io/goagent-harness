@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strconv"
 )
 
 // 模型参数可能来自 JSON 解码（数字为 float64）或 Dispatcher 日志回放（数字为 json.Number）。
@@ -25,17 +26,22 @@ func intArg(args map[string]any, key string, def int) (int, error) {
 	case int:
 		return v, nil
 	case int64:
-		return int(v), nil
+		if int64(int(v)) == v {
+			return int(v), nil
+		}
 	case float64:
-		if v == math.Trunc(v) {
+		// Use an exclusive power-of-two upper bound: float64(MaxInt64)
+		// rounds up to 2^63, which cannot be represented by int64.
+		bound := math.Ldexp(1, strconv.IntSize-1)
+		if v >= -bound && v < bound && v == math.Trunc(v) {
 			return int(v), nil
 		}
 	case json.Number:
-		if n, err := v.Int64(); err == nil {
+		if n, err := strconv.ParseInt(string(v), 10, strconv.IntSize); err == nil {
 			return int(n), nil
 		}
 	}
-	return 0, fmt.Errorf("%s must be an integer", key)
+	return 0, fmt.Errorf("%s must be an integer within the platform int range", key)
 }
 
 func stringsArg(args map[string]any, key string) ([]string, error) {

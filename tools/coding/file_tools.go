@@ -89,7 +89,9 @@ func newReadFileTool(w *Workspace) interfaces.Tool {
 			if len(lines) > 0 && offset > len(lines) {
 				return tools.Rejected(fmt.Sprintf("offset %d exceeds total lines %d of %s", offset, len(lines), rel), nil), nil
 			}
-			end := min(len(lines), offset-1+limit)
+			// Clamp before adding so a valid but huge limit cannot overflow.
+			start := min(offset-1, len(lines))
+			end := start + min(limit, len(lines)-start)
 			var sb strings.Builder
 			for i := offset - 1; i < end; i++ {
 				line := lines[i]

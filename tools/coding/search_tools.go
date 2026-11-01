@@ -240,7 +240,9 @@ func newGrepTool(w *Workspace) interfaces.Tool {
 					return nil
 				}
 				sc := bufio.NewScanner(bytes.NewReader(data))
-				sc.Buffer(make([]byte, 0, 64*1024), maxFileBytes)
+				// Scanner needs one byte beyond the longest accepted line to
+				// determine EOF when the file has no trailing newline.
+				sc.Buffer(make([]byte, 0, 64*1024), maxFileBytes+1)
 				for n := 1; sc.Scan(); n++ {
 					line := sc.Text()
 					if !re.MatchString(line) {
@@ -255,7 +257,7 @@ func newGrepTool(w *Workspace) interfaces.Tool {
 					}
 					matches = append(matches, grepMatch{Path: info.Path, Line: n, Text: line})
 				}
-				return nil
+				return sc.Err()
 			})
 			if err != nil {
 				return resp.ExecutionError("grep failed", nil, err)

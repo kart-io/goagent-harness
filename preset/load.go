@@ -156,6 +156,13 @@ func (s *Set) apply(src Source, origin Origin) error {
 	if err := dec.Decode(&f); err != nil && !errors.Is(err, io.EOF) {
 		return err
 	}
+	var trailing any
+	if err := dec.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err != nil {
+			return err
+		}
+		return errors.New("configuration must contain a single YAML document")
+	}
 	if f.Limits != nil {
 		if !src.Trusted {
 			return errors.New("limits 只能由可信层声明")
