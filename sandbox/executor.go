@@ -17,14 +17,25 @@ import (
 	"time"
 )
 
+// Linux 上 native 后端的隔离实现。
+const (
+	RunnerBubblewrap = "bwrap"
+	RunnerLandlock   = "landlock"
+)
+
 type Executor struct {
-	Policy       Policy
-	Backend      string
-	Image        string
+	Policy  Policy
+	Backend string
+	Image   string
+	// Runner 固定 Linux native 的隔离实现。留空时优先 bwrap，探测不通过再用 Landlock。
+	Runner       string
 	EnvAllowlist []string
 }
 type Report struct {
-	Backend       string
+	Backend string
+	// Runner 是实际使用的隔离实现。
+	Runner string
+	// Enforcement 为 partial 时见 Runner 对应的限制说明，要求绝对边界的调用方应当拒绝。
 	Enforcement   string
 	Network       Network
 	WritableRoots []string
@@ -48,13 +59,17 @@ func (e *Executor) Run(ctx context.Context, c env.Command) (env.Result, error) {
 	if err != nil || !contains(p.WorkspaceRoot, dir) {
 		return env.Result{}, ErrDenied
 	}
-	if _, err = e.probe(ctx, p); err != nil {
+	report, err := e.probe(ctx, p)
+	if err != nil {
 		return env.Result{}, err
 	}
 	if err := ctx.Err(); err != nil {
 		return env.Result{}, err
 	}
-	return e.raw(ctx, p, c)
+	// 只用探测通过的实现执行。
+	verified := *e
+	verified.Runner = report.Runner
+	return verified.raw(ctx, p, c)
 }
 func (e *Executor) Probe(ctx context.Context) (Report, error) {
 	p, err := effective(ctx, e.Policy)
@@ -63,8 +78,39 @@ func (e *Executor) Probe(ctx context.Context) (Report, error) {
 	}
 	return e.probe(ctx, p)
 }
+
+// probe 选出第一个通过完整探测的实现。探测包含越界写入和网络的反向验证，所以 bwrap 能启动但兑现不了策略时也不会被选中。
 func (e *Executor) probe(ctx context.Context, p Policy) (Report, error) {
-	r := Report{Backend: e.Backend, Enforcement: "unavailable", Network: p.Network}
+	if e.Backend != "native" || runtime.GOOS != "linux" || e.Runner != "" {
+		return e.probeRunner(ctx, p)
+	}
+	var failures error
+	for _, runner := range []string{RunnerBubblewrap, RunnerLandlock} {
+		candidate := *e
+		candidate.Runner = runner
+		report, err := candidate.probeRunner(ctx, p)
+		if err == nil {
+			return report, nil
+		}
+		if ctx.Err() != nil {
+			return report, ctx.Err()
+		}
+		if !errors.Is(err, ErrUnavailable) {
+			return report, err
+		}
+		failures = errors.Join(failures, fmt.Errorf("%s: %w", runner, err))
+	}
+	return Report{Backend: e.Backend, Enforcement: "unavailable", Network: p.Network}, failures
+}
+
+func (e *Executor) probeRunner(ctx context.Context, p Policy) (Report, error) {
+	r := Report{Backend: e.Backend, Runner: e.Runner, Enforcement: "unavailable", Network: p.Network}
+	if e.Runner != "" && (e.Backend != "native" || runtime.GOOS != "linux" || (e.Runner != RunnerBubblewrap && e.Runner != RunnerLandlock)) {
+		return r, fmt.Errorf("%w: runner %q on %s/%s", ErrUnavailable, e.Runner, e.Backend, runtime.GOOS)
+	}
+	if e.Runner == RunnerLandlock && landlockABI() < landlockMinABI {
+		return r, fmt.Errorf("%w: landlock ABI %d is below %d", ErrUnavailable, landlockABI(), landlockMinABI)
+	}
 	if e.Backend == "local" {
 		if p.Mode != DangerFullAccess || p.Network != NetworkInherit {
 			return r, ErrDenied
@@ -167,6 +213,9 @@ func (e *Executor) probe(ctx context.Context, p Policy) (Report, error) {
 		}
 	}
 	r.Enforcement = "full"
+	if e.Runner == RunnerLandlock && landlockABI() < landlockFullABI {
+		r.Enforcement = "partial"
+	}
 	switch p.Mode {
 	case DangerFullAccess:
 		r.WritableRoots = []string{"/"}
@@ -231,6 +280,7 @@ func (e *Executor) runOnce(ctx context.Context, p Policy, c env.Command) (env.Re
 	dir := filepath.Join(p.WorkspaceRoot, c.Dir)
 	var cleanup func()
 	var seccomp *os.File
+	landlock := false
 	commandEnv := e.environment()
 	privateTemp := ""
 	if e.Backend == "native" && p.Mode == WorkspaceWrite {
@@ -274,6 +324,10 @@ func (e *Executor) runOnce(ctx context.Context, p Policy, c env.Command) (env.Re
 			}
 			argv = append([]string{"/usr/bin/sandbox-exec", "-p", profile}, argv...)
 		case "linux":
+			if e.Runner == RunnerLandlock {
+				landlock = true
+				break
+			}
 			var filterErr error
 			seccomp, filterErr = socketFilter(p)
 			if filterErr != nil {
@@ -363,7 +417,14 @@ func (e *Executor) runOnce(ctx context.Context, p Policy, c env.Command) (env.Re
 	out := &boundedBuffer{}
 	cmd.Stdout = out
 	cmd.Stderr = out
-	err := cmd.Run()
+	var err error
+	if landlock {
+		if err = startLandlock(cmd, p, privateTemp); err == nil {
+			err = cmd.Wait()
+		}
+	} else {
+		err = cmd.Run()
+	}
 	res := env.Result{Output: out.bytes()}
 	started := true
 	if startMarker != nil {

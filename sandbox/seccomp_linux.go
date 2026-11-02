@@ -12,6 +12,29 @@ import (
 
 // socketFilter restricts creation of host-facing sockets after bwrap setup.
 func socketFilter(p Policy) (*os.File, error) {
+	filters, err := socketFilterProgram(p)
+	if err != nil || filters == nil {
+		return nil, err
+	}
+	f, err := os.CreateTemp("", "harness-seccomp-")
+	if err != nil {
+		return nil, err
+	}
+	_ = os.Remove(f.Name())
+	for _, filter := range filters {
+		if err := binary.Write(f, binary.LittleEndian, filter); err != nil {
+			_ = f.Close()
+			return nil, err
+		}
+	}
+	if _, err := f.Seek(0, 0); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
+func socketFilterProgram(p Policy) ([]unix.SockFilter, error) {
 	if p.Mode == DangerFullAccess && p.Network == NetworkInherit {
 		return nil, nil
 	}
@@ -49,20 +72,5 @@ func socketFilter(p Policy) (*os.File, error) {
 	} else {
 		filters = append(filters, unix.SockFilter{Code: jeq, K: nr, Jt: 1}, unix.SockFilter{Code: ret, K: allow}, unix.SockFilter{Code: ld, K: 16}, unix.SockFilter{Code: jeq, K: unix.AF_UNIX, Jf: 1}, unix.SockFilter{Code: ret, K: deny}, unix.SockFilter{Code: ret, K: allow})
 	}
-	f, err := os.CreateTemp("", "harness-seccomp-")
-	if err != nil {
-		return nil, err
-	}
-	_ = os.Remove(f.Name())
-	for _, filter := range filters {
-		if err := binary.Write(f, binary.LittleEndian, filter); err != nil {
-			_ = f.Close()
-			return nil, err
-		}
-	}
-	if _, err := f.Seek(0, 0); err != nil {
-		_ = f.Close()
-		return nil, err
-	}
-	return f, nil
+	return filters, nil
 }

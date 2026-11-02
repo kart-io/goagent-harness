@@ -125,6 +125,9 @@ func buildWorkspace(ctx context.Context, a *Assembler, c *WorkspaceConfig) error
 	contract := "harness-sandbox-v2;moby-seccomp-sha256=6416b47770785a41ac59073cdc77d9fe98517df2799dc83ef207e622de3053f6"
 	if c.Executor == "native" {
 		contract += ";" + runtime.GOOS + "/" + runtime.GOARCH
+		if report.Runner == sandbox.RunnerLandlock {
+			contract += ";runner=" + report.Runner
+		}
 	}
 	return a.SetWorkspace(w, WorkspaceInfo{
 		Root: local.Root(), Sandbox: c.Sandbox, MaxSandbox: c.MaxSandbox,

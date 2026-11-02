@@ -204,3 +204,21 @@ func TestManifestBindsAgentIdentityButNotSessionRevision(t *testing.T) {
 	t.Cleanup(func() { _ = second.Close() })
 	require.NotEqual(t, initial, second.Manifest.Digest(), "another trusted Agent identity must not replay the same assembly scope")
 }
+
+// bwrap 在宿主上用不了时回退到 Landlock，恢复契约要记录它，避免恢复时悄悄换成另一种隔离。
+func TestNativeFallbackRecordedInContract(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("只有 Linux 有 Landlock")
+	}
+	bin := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "bwrap"), []byte("#!/bin/sh\necho 'bwrap: setting up uid map: Permission denied' >&2\nexit 1\n"), 0o700))
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if _, err := (&sandbox.Executor{Backend: "native", Runner: sandbox.RunnerLandlock, Policy: sandbox.Policy{WorkspaceRoot: t.TempDir(), Mode: sandbox.WorkspaceWrite, Network: sandbox.NetworkDeny}}).Probe(context.Background()); err != nil {
+		t.Skip(err)
+	}
+	src := sandboxPreset("{sandbox: workspace-write, maxSandbox: workspace-write, executor: native}", "[write_file]", "{rules: [{tool: write_file, decision: allow}]}")
+	asm, err := Build(context.Background(), mustGet(t, src), Host{Root: t.TempDir(), AgentID: "coder"})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = asm.Close() })
+	require.Contains(t, asm.Manifest.Workspace.Contract, ";runner="+sandbox.RunnerLandlock)
+}
