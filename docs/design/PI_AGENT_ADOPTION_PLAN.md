@@ -72,7 +72,7 @@ GoAgent已有Handle.Steer、Inject、Followup、Redirect和Wait等能力。建�
 5. 预算、网络和沙箱限制持续向后代收窄；没有workspace的中间层不丢失上限。
 6. 后台child完成后，通知去重但不重新执行业务；控制权丢失时旧宿主不继续续期或销毁。
 
-Pi Durable的owned Conversation可以作为契约参考，实验性API和Chord任务系统不直接移植。
+Pi Durable的owned Conversation可以作为契约参考，实验性API和Chord任务系统不直接移植。完成通知、等待上限和并发槽位的补充规则见[dsh-superagent采纳计划](DSH_SUPERAGENT_ADOPTION_PLAN.md)的SA2。
 
 ## PI5：让远端操作更少，而非更宽松
 
