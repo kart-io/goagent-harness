@@ -129,7 +129,7 @@ func openSkillDirectory(root, d string) (*os.Root, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer workspace.Close()
+	defer func() { _ = workspace.Close() }()
 	return workspace.OpenRoot(d)
 }
 

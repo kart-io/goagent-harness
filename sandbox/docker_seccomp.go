@@ -84,9 +84,9 @@ func writeDockerProfile(p Policy) (string, func(), error) {
 	if err != nil {
 		return "", nil, err
 	}
-	cleanup := func() { os.Remove(f.Name()) }
+	cleanup := func() { _ = os.Remove(f.Name()) }
 	if _, err = f.Write(profile); err != nil {
-		f.Close()
+		_ = f.Close()
 		cleanup()
 		return "", nil, err
 	}

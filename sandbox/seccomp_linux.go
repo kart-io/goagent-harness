@@ -53,15 +53,15 @@ func socketFilter(p Policy) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	os.Remove(f.Name())
+	_ = os.Remove(f.Name())
 	for _, filter := range filters {
 		if err := binary.Write(f, binary.LittleEndian, filter); err != nil {
-			f.Close()
+			_ = f.Close()
 			return nil, err
 		}
 	}
 	if _, err := f.Seek(0, 0); err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, err
 	}
 	return f, nil

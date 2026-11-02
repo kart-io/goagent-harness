@@ -31,7 +31,7 @@ func run(backend string, approve bool) error {
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(root)
+	defer func() { _ = os.RemoveAll(root) }()
 	image := ""
 	if backend == "docker" {
 		image = ", image: alpine:3"
@@ -57,7 +57,7 @@ func run(backend string, approve bool) error {
 	if err != nil {
 		return err
 	}
-	defer asm.Close()
+	defer func() { _ = asm.Close() }()
 	ctx := tools.WithSessionID(context.Background(), "demo-session")
 	for _, tc := range []struct {
 		id, path string

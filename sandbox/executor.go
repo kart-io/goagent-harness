@@ -95,13 +95,13 @@ func (e *Executor) probe(ctx context.Context, p Policy) (Report, error) {
 	if err != nil {
 		return r, err
 	}
-	defer os.RemoveAll(root)
+	defer func() { _ = os.RemoveAll(root) }()
 	root, _ = filepath.EvalSymlinks(root)
 	outside, err := os.MkdirTemp(probeBase, "harness-outside-")
 	if err != nil {
 		return r, err
 	}
-	defer os.RemoveAll(outside)
+	defer func() { _ = os.RemoveAll(outside) }()
 	outside, _ = filepath.EvalSymlinks(outside)
 	q := p
 	q.WorkspaceRoot = root
@@ -166,9 +166,10 @@ func (e *Executor) probe(ctx context.Context, p Policy) (Report, error) {
 		}
 	}
 	r.Enforcement = "full"
-	if p.Mode == DangerFullAccess {
+	switch p.Mode {
+	case DangerFullAccess:
 		r.WritableRoots = []string{"/"}
-	} else if p.Mode == WorkspaceWrite {
+	case WorkspaceWrite:
 		r.WritableRoots = append([]string{p.WorkspaceRoot}, p.AdditionalWritableRoots...)
 	}
 	if e.Backend == "native" && p.Mode == WorkspaceWrite {
@@ -217,7 +218,7 @@ func (e *Executor) raw(ctx context.Context, p Policy, c env.Command) (env.Result
 		if err != nil {
 			return env.Result{}, err
 		}
-		defer os.RemoveAll(privateTemp)
+		defer func() { _ = os.RemoveAll(privateTemp) }()
 		privateTemp, err = filepath.EvalSymlinks(privateTemp)
 		if err != nil {
 			return env.Result{}, err
@@ -258,12 +259,13 @@ func (e *Executor) raw(ctx context.Context, p Policy, c env.Command) (env.Result
 				return env.Result{}, filterErr
 			}
 			if seccomp != nil {
-				defer seccomp.Close()
+				defer func() { _ = seccomp.Close() }()
 			}
 			args := []string{"bwrap", "--die-with-parent", "--new-session", "--unshare-pid", "--ro-bind", "/", "/", "--proc", "/proc", "--ro-bind", "/dev", "/dev", "--dev-bind", "/dev/null", "/dev/null"}
-			if p.Mode == DangerFullAccess {
+			switch p.Mode {
+			case DangerFullAccess:
 				args = []string{"bwrap", "--die-with-parent", "--new-session", "--unshare-pid", "--bind", "/", "/", "--proc", "/proc", "--dev", "/dev"}
-			} else if p.Mode == WorkspaceWrite {
+			case WorkspaceWrite:
 				args = append(args, "--tmpfs", privateTemp)
 				for _, r := range append([]string{p.WorkspaceRoot}, p.AdditionalWritableRoots...) {
 					args = append(args, "--bind", r, r)
@@ -320,7 +322,7 @@ func (e *Executor) raw(ctx context.Context, p Policy, c env.Command) (env.Result
 		cleanup = func() {
 			c, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			exec.CommandContext(c, "docker", "rm", "-f", name).Run()
+			_ = exec.CommandContext(c, "docker", "rm", "-f", name).Run()
 		}
 	default:
 		return env.Result{}, ErrUnavailable
@@ -336,7 +338,7 @@ func (e *Executor) raw(ctx context.Context, p Policy, c env.Command) (env.Result
 	cmd.Env = commandEnv
 	cmd.WaitDelay = time.Second
 	isolate(cmd)
-	defer kill(cmd)
+	defer func() { _ = kill(cmd) }()
 	out := &boundedBuffer{}
 	cmd.Stdout = out
 	cmd.Stderr = out
@@ -413,7 +415,7 @@ func (e *Executor) probeUnixSocket(ctx context.Context, p Policy) error {
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(root)
+	defer func() { _ = os.RemoveAll(root) }()
 	socket := filepath.Join(root, "probe.sock")
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
