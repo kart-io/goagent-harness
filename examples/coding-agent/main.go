@@ -15,12 +15,12 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/kart-io/goagent/builder"
 	"github.com/kart-io/goagent-harness/preset"
+	"github.com/kart-io/goagent-harness/tools/coding"
+	"github.com/kart-io/goagent/builder"
 	"github.com/kart-io/goagent/llm"
 	"github.com/kart-io/goagent/llm/providers"
 	"github.com/kart-io/goagent/tools"
-	"github.com/kart-io/goagent-harness/tools/coding"
 	"gopkg.in/yaml.v3"
 )
 

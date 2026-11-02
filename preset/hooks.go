@@ -16,11 +16,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kart-io/goagent-harness/tools/coding"
 	"github.com/kart-io/goagent/builder"
 	"github.com/kart-io/goagent/harness/env"
 	"github.com/kart-io/goagent/interfaces"
 	"github.com/kart-io/goagent/tools"
-	"github.com/kart-io/goagent-harness/tools/coding"
 )
 
 // ComponentClaudeCodeHooks 是 Claude Code 命令钩子的兼容组件名。

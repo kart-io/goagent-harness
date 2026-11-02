@@ -22,12 +22,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kart-io/goagent/builder"
 	"github.com/kart-io/goagent-harness/preset"
+	"github.com/kart-io/goagent-harness/tools/coding"
+	"github.com/kart-io/goagent/builder"
 	"github.com/kart-io/goagent/llm"
 	"github.com/kart-io/goagent/llm/providers"
 	"github.com/kart-io/goagent/tools"
-	"github.com/kart-io/goagent-harness/tools/coding"
 )
 
 const systemPrompt = `你是一个严谨的编码 Agent，在给定的 Go 仓库中工作。用 read_file、grep、glob 阅读代码，用 write_file、edit_file 修改，

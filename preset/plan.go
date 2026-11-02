@@ -8,11 +8,11 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/kart-io/goagent-harness/tools/coding"
 	"github.com/kart-io/goagent/builder"
 	"github.com/kart-io/goagent/interfaces"
 	"github.com/kart-io/goagent/llm"
 	"github.com/kart-io/goagent/tools"
-	"github.com/kart-io/goagent-harness/tools/coding"
 	"github.com/kart-io/goagent/tools/policy"
 	"github.com/kart-io/goagent/tools/spill"
 )
