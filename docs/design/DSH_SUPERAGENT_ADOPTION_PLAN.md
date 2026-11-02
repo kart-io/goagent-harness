@@ -1,6 +1,6 @@
 # dsh-superagent 设计采纳计划
 
-状态：**调研提案，功能阶段未执行**。2026-11-02。依据 [dsh-superagent `6337fc8`](https://github.com/deepseek-ai/dsh-superagent-prototype/tree/6337fc823ce20251c8de8085948165c81aaa701e) 的 `docs/003-execution.md` 与 `docs/007-architecture.md`。对方自称研究原型，这里只读过设计文档，未核对其源码，也未运行。
+状态：**SA1、SA2 已实现**（[effects](../../effects)、[background](../../background)），实施差异见“实施记录”。2026-11-02。依据 [dsh-superagent `6337fc8`](https://github.com/deepseek-ai/dsh-superagent-prototype/tree/6337fc823ce20251c8de8085948165c81aaa701e) 的 `docs/003-execution.md` 与 `docs/007-architecture.md`。对方自称研究原型，这里只读过设计文档，未核对其源码，也未运行。
 
 dsh-superagent 是建在 DeepSeek Harness 之上的主动式应用，与本仓库不在同一层。本计划只采纳下面两项机制，不引入 Ticket、Eval、Source、面板等应用层概念。Worker 免审批的执行方式不采纳，现有沙盒与审批不变。
 
@@ -8,8 +8,8 @@ dsh-superagent 是建在 DeepSeek Harness 之上的主动式应用，与本仓�
 
 | 阶段 | 归属 | 依赖 | 交付（提案） | 主要验收 |
 | --- | --- | --- | --- | --- |
-| SA1 外部副作用投递 | 先做宿主案例，确有复用需求再成为可选模块 | [PI1](PI_AGENT_ADOPTION_PLAN.md) | 决定与待办原子写入、提交后执行、失败退避 | 各崩溃点不丢失待办，不确定的操作不自动重做 |
-| SA2 后台子工作的运行规则 | 并入 [PI4](PI_AGENT_ADOPTION_PLAN.md#pi4持久子工作所有权) | PI1、PI4 | 完成通知、等待上限、并发槽位 | 通知只消费一次，新任务占满槽位时人的输入仍能进入 |
+| SA1 外部副作用投递 | 可选包 `effects` | [PI1](PI_AGENT_ADOPTION_PLAN.md) | 决定与待办原子写入、提交后执行、失败退避 | 各崩溃点不丢失待办，不确定的操作不自动重做 |
+| SA2 后台子工作的运行规则 | 可选包 `background`，同时实现 [PI4](PI_AGENT_ADOPTION_PLAN.md#pi4持久子工作所有权) | PI1 | 完成通知、等待上限、并发槽位 | 通知只消费一次，新任务占满槽位时人的输入仍能进入 |
 
 ## SA1：外部副作用投递
 
@@ -98,6 +98,25 @@ dsh-superagent 是建在 DeepSeek Harness 之上的主动式应用，与本仓�
 | 持久运行中到达新输入 | `Redirect` 沿用现有行为降级为 Steer，不取消进行中的模型回合 |
 | 为人保留的槽位已被占用 | 人的输入排在下一个空闲槽位之前，不抢占进行中的轮次；自动输入不得使用保留槽位 |
 
+## 实施记录（2026-11-02）
+
+与上文提案的差异：
+
+| 提案 | 实施 | 原因 |
+| --- | --- | --- |
+| SA1 先做宿主案例 | 直接提供 `effects` 包 | SA2 的通知投递就是它的第一个使用方 |
+| 决定与待办可以分开存放 | 队列是单个快照，待办数量和内容大小有上限 | `durable.Store` 不能枚举，单个快照才能取到全部待办 |
+| 同目标持续失败时不阻塞 | 结果未知的待办同样不阻塞后续待办，由 `Problems` 暴露 | 阻塞要等宿主裁决，可能无限等待；同键的新待办会被拒绝 |
+| 按人保留槽位 | 普通槽位外多一个，等待时人的输入优先于自动输入，再优先于新任务 | 与提案一致，取值固定为 1 个 |
+| 通知由 child run 身份去重 | 投递至少一次，由所有者按 `ChildID` 去重 | 通知崩溃后补发时无法确认是否已送达；不重新执行业务 |
+
+PI4 中尚未实现的部分：`owned/borrowed/Retain` 的沙箱责任转移，以及没有 workspace 的中间层保留上限。后台子 Agent 使用与前台相同的装配，权限不放宽；沙箱实例的生命周期仍由宿主负责，宿主须在关闭 Assembly 前停止 Manager。
+
+后台子工作遇到审批等待时记为失败（分类 `waiting`），不能续跑，宿主须让后台子 Agent 的工具不需要等待人工审批。
+
+验证范围：`effects` 和 `background` 的单元测试使用 `FileStore`，不校验锁的持有者。租约防护、重启恢复和接管在真实 Postgres 上做过一次性验证，没有进入仓库，CI 不覆盖。
+
+## 范围
 ## 范围
 
-本文只记录提案，不列入现有 API。实施前各阶段需要独立规格和失败恢复测试，上述边界情况须进入这些测试。
+上述边界情况已进入 `effects` 和 `background` 的测试。

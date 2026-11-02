@@ -119,4 +119,4 @@ Sandbox 补充资料：[API参考](docs/reference/SANDBOX_API.md)、[场景指�
 
 Pi Agent设计对照：[固定源码调研](docs/research/2026-11-01-pi-agent-design.md)、[采纳计划](docs/design/PI_AGENT_ADOPTION_PLAN.md)、[230项选择性验证](docs/evaluation/2026-11-01-pi-agent/REPORT.md)。区分编码CLI与实验性Durable，不把会话分支视为文件回滚。
 
-dsh-superagent 设计对照：[采纳计划](docs/design/DSH_SUPERAGENT_ADOPTION_PLAN.md)。其中的新能力尚未实现。
+dsh-superagent 设计对照：[采纳计划](docs/design/DSH_SUPERAGENT_ADOPTION_PLAN.md)。外部副作用投递见 [effects](effects)，后台子工作见 [background](background)。
