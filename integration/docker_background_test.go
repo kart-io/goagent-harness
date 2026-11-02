@@ -61,18 +61,24 @@ func dockerContainers(t *testing.T, ctx context.Context, run string) []string {
 	return strings.Fields(out)
 }
 
-// dockerExec 只用于只读核对。Docker 29.9.2 在容器刚启动时并发 exec 偶尔会卡住（纯 shell 也能复现），所以限时并重试；有副作用的命令不能这样做。
+// dockerExec 只用于只读核对和可重复的命令。Docker 29.9.2 并发 exec 偶尔会卡住（纯 shell 也能复现），所以限时并重试。
 func dockerExec(t *testing.T, id string, argv ...string) string {
 	t.Helper()
 	var lastErr error
+	lastHung := false
 	for range 6 {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		out, err := dockerRun(ctx, append([]string{"exec", id}, argv...)...)
+		hung := ctx.Err() != nil
 		cancel()
 		if err == nil {
 			return out
 		}
-		lastErr = err
+		// 上一次卡住时命令可能已经生效，子工作结束后容器被回收。后续断言会确认结果。
+		if lastErr != nil && lastHung && dockerMissing(err) {
+			return ""
+		}
+		lastErr, lastHung = err, hung
 	}
 	require.NoError(t, lastErr)
 	return ""

@@ -392,6 +392,11 @@ func checkKeyedCommand(ctx context.Context, h Harness) error {
 		done <- err
 	}()
 	if err := waitFile(ctx, e, "effect.txt"); err != nil {
+		select {
+		case runErr := <-done:
+			return fmt.Errorf("命令没有启动，RunKeyed 返回: %v", runErr)
+		default:
+		}
 		return fmt.Errorf("命令没有启动: %w", err)
 	}
 	cancel()

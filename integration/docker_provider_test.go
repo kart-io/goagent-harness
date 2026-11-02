@@ -3,6 +3,7 @@ package integration_test
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -29,6 +30,9 @@ const (
 	dockerWorkspace = "/workspace"
 	dockerLabelRun  = "goagent.test.run"
 	dockerCrashExit = 94
+	dockerRunLimit  = 10 * time.Minute
+	dockerFSRequest = 10 * time.Second
+	dockerFSRetries = 6
 )
 
 func requireDocker(t *testing.T) {
@@ -166,7 +170,7 @@ func (x plainDockerExecutor) RunWithPolicy(ctx context.Context, c env.Command, p
 }
 
 func (e *dockerEnvironment) supervisor() *sandbox.CommandSupervisor {
-	return &sandbox.CommandSupervisor{Exec: e, RequestTimeout: 5 * time.Second}
+	return &sandbox.CommandSupervisor{Exec: dockerRawExec{e}, RequestTimeout: 5 * time.Second}
 }
 
 func (e *dockerEnvironment) RunKeyed(ctx context.Context, c sandbox.KeyedCommand, p sandbox.Policy) (sandbox.KeyedResult, error) {
@@ -215,9 +219,15 @@ func (e *dockerEnvironment) exec(ctx context.Context, dir string, stdin []byte, 
 	return out.Bytes(), errOut.Bytes(), 0, runErr
 }
 
+// docker exec 偶尔不返回（Docker 29.9.2，并发时约 6%，纯 shell 可复现），命令可能已经生效。
+// 所以命令走监管器：启动由 mkdir 保证只有一次，请求可以放心超时重试。
 func (e *dockerEnvironment) Run(ctx context.Context, c env.Command) (env.Result, error) {
-	stdout, stderr, code, err := e.exec(ctx, c.Dir, nil, c.Argv...)
-	return env.Result{Output: append(stdout, stderr...), ExitCode: code}, err
+	key := make([]byte, 16)
+	if _, err := rand.Read(key); err != nil {
+		return env.Result{}, err
+	}
+	res, err := e.supervisor().RunKeyed(ctx, sandbox.KeyedCommand{Key: "run-" + hex.EncodeToString(key), Timeout: dockerRunLimit, Command: c}, sandbox.Policy{})
+	return res.Result, err
 }
 
 func (e *dockerEnvironment) CheckPolicy(ctx context.Context, p sandbox.Policy) error {
@@ -240,6 +250,15 @@ func (e *dockerEnvironment) RunWithPolicy(ctx context.Context, c env.Command, p 
 	return e.Run(ctx, c)
 }
 
+// dockerRawExec 是监管器的传输层：一次 docker exec，由监管器负责超时和重试。
+type dockerRawExec struct{ e *dockerEnvironment }
+
+func (x dockerRawExec) CheckPolicy(context.Context, sandbox.Policy) error { return nil }
+func (x dockerRawExec) RunWithPolicy(ctx context.Context, c env.Command, _ sandbox.Policy) (env.Result, error) {
+	stdout, stderr, code, err := x.e.exec(ctx, c.Dir, nil, c.Argv...)
+	return env.Result{Output: append(stdout, stderr...), ExitCode: code}, err
+}
+
 // instanceExec 在实例内运行命令，stdout 和 stderr 须逐字节保留。
 type instanceExec interface {
 	exec(ctx context.Context, dir string, stdin []byte, argv ...string) (stdout, stderr []byte, code int, err error)
@@ -247,6 +266,19 @@ type instanceExec interface {
 
 // dockerFS 用实例内的命令实现文件操作，条件写入由实例内的 flock 协调。OpenSandbox Provider 也用它。
 type dockerFS struct{ e instanceExec }
+
+// read 运行只读命令，单次调用卡住时重试。
+func (f dockerFS) read(ctx context.Context, argv ...string) (stdout, stderr []byte, code int, err error) {
+	for range dockerFSRetries {
+		attempt, cancel := context.WithTimeout(ctx, dockerFSRequest)
+		stdout, stderr, code, err = f.e.exec(attempt, "", nil, argv...)
+		cancel()
+		if err == nil || ctx.Err() != nil {
+			return stdout, stderr, code, err
+		}
+	}
+	return stdout, stderr, code, err
+}
 
 func (f dockerFS) Resolve(p string) (string, error) {
 	return f.ResolveContext(context.Background(), p)
@@ -264,7 +296,7 @@ func (f dockerFS) ResolveContext(ctx context.Context, p string) (string, error) 
 		return "", env.ErrOutsideWorkspace
 	}
 	// 符号链接指向工作区外时拒绝；目标不存在时 readlink 没有输出，按词法结果处理。
-	stdout, _, _, err := f.e.exec(ctx, "", nil, "readlink", "-f", path.Join(dockerWorkspace, clean))
+	stdout, _, _, err := f.read(ctx, "readlink", "-f", path.Join(dockerWorkspace, clean))
 	if err != nil {
 		return "", err
 	}
@@ -307,7 +339,7 @@ func parseStat(line string) (env.Info, error) {
 }
 
 func (f dockerFS) Stat(ctx context.Context, p string) (env.Info, error) {
-	stdout, stderr, code, err := f.e.exec(ctx, "", nil, "stat", "-c", "%n|%s|%f|%Y", f.abs(p))
+	stdout, stderr, code, err := f.read(ctx, "stat", "-c", "%n|%s|%f|%Y", f.abs(p))
 	if err != nil {
 		return env.Info{}, err
 	}
@@ -326,7 +358,7 @@ func dockerVersion(data []byte) env.Version {
 }
 
 func (f dockerFS) ReadFile(ctx context.Context, p string) ([]byte, env.Version, error) {
-	stdout, stderr, code, err := f.e.exec(ctx, "", nil, "cat", f.abs(p))
+	stdout, stderr, code, err := f.read(ctx, "cat", f.abs(p))
 	if err != nil {
 		return nil, "", err
 	}
@@ -361,7 +393,21 @@ func (f dockerFS) WriteFile(ctx context.Context, p string, data []byte, intent e
 	if intent.Perm != 0 {
 		perm = strconv.FormatUint(uint64(intent.Perm.Perm()), 8)
 	}
-	_, stderr, code, err := f.e.exec(ctx, "", data, "sh", "-c", dockerWriteScript, "write", f.abs(p), create, string(intent.IfVersion), perm)
+	var stderr []byte
+	var code int
+	var err error
+	for range dockerFSRetries {
+		attempt, cancel := context.WithTimeout(ctx, dockerFSRequest)
+		_, stderr, code, err = f.e.exec(attempt, "", data, "sh", "-c", dockerWriteScript, "write", f.abs(p), create, string(intent.IfVersion), perm)
+		cancel()
+		if err == nil || ctx.Err() != nil {
+			break
+		}
+		// 上一次可能已经生效，读回确认后才能重发，否则条件写入会误报冲突。
+		if current, _, readErr := f.ReadFile(ctx, p); readErr == nil && bytes.Equal(current, data) {
+			return dockerVersion(data), nil
+		}
+	}
 	if err != nil {
 		return "", err
 	}
@@ -377,9 +423,25 @@ func (f dockerFS) WriteFile(ctx context.Context, p string, data []byte, intent e
 }
 
 func (f dockerFS) Remove(ctx context.Context, p string) error {
-	_, stderr, code, err := f.e.exec(ctx, "", nil, "rm", "-r", f.abs(p))
+	var stderr []byte
+	var code int
+	var err error
+	retried := false
+	for range dockerFSRetries {
+		attempt, cancel := context.WithTimeout(ctx, dockerFSRequest)
+		_, stderr, code, err = f.e.exec(attempt, "", nil, "rm", "-r", f.abs(p))
+		cancel()
+		if err == nil || ctx.Err() != nil {
+			break
+		}
+		retried = true
+	}
 	if err != nil {
 		return err
+	}
+	// 卡住的那次可能已经删除了。
+	if retried && code != 0 && notFound(stderr) {
+		return nil
 	}
 	if code != 0 {
 		if notFound(stderr) {
@@ -391,7 +453,7 @@ func (f dockerFS) Remove(ctx context.Context, p string) error {
 }
 
 func (f dockerFS) Walk(ctx context.Context, p string, fn func(env.Info) error) error {
-	stdout, stderr, code, err := f.e.exec(ctx, "", nil, "find", f.abs(p), "-exec", "stat", "-c", "%n|%s|%f|%Y", "{}", "+")
+	stdout, stderr, code, err := f.read(ctx, "find", f.abs(p), "-exec", "stat", "-c", "%n|%s|%f|%Y", "{}", "+")
 	if err != nil {
 		return err
 	}
