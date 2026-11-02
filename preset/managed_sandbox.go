@@ -25,7 +25,18 @@ func prepareSandbox(ctx context.Context, a *Assembler, c *WorkspaceConfig) (*san
 	if err != nil {
 		return nil, err
 	}
-	session, err := a.host.Sandboxes.Open(ctx, sandbox.Request{Provider: c.Provider, Scope: string(scope), Image: c.Image, Network: c.Network})
+	req := sandbox.Request{Provider: c.Provider, Scope: string(scope), Image: c.Image, Network: c.Network}
+	var session *sandbox.Session
+	switch {
+	case a.opts.template:
+		// 实例属于每次运行。这里只校验装配，清单因此不含具体实例。
+		a.perRun = true
+		session, err = a.host.Sandboxes.Placeholder(req)
+	case a.opts.childSandboxes != nil:
+		session, err = a.opts.childSandboxes.open(ctx, a.host.Sandboxes, req)
+	default:
+		session, err = a.host.Sandboxes.Open(ctx, req)
+	}
 	if session != nil {
 		a.OnClose(func() error {
 			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -60,13 +71,18 @@ func buildManagedWorkspace(ctx context.Context, a *Assembler, c *WorkspaceConfig
 		return err
 	}
 	commands := c.MaxSandbox != ReadOnly
-	if commands {
+	if commands && !a.opts.template {
 		if err = session.CheckPolicy(ctx, p); err != nil {
 			return err
 		}
 		if err = session.CheckPolicy(ctx, ceiling); err != nil {
 			return err
 		}
+	}
+	if _, deferred := a.host.Approver.(deferredApprover); deferred && commands && session.SupportsKeyed() {
+		a.host.Approver = deferredApprover{cancel: func(ctx context.Context, key string) (bool, error) {
+			return session.CancelKeyed(ctx, key, p)
+		}}
 	}
 	base := session.FileSystem()
 	if guard, ok := base.(sandbox.MutationProtector); ok {
@@ -109,19 +125,37 @@ type managedPolicyExecutor struct {
 
 func (e managedPolicyExecutor) Capabilities() env.Capabilities { return e.session.Info().Capabilities }
 func (e managedPolicyExecutor) Run(ctx context.Context, c env.Command) (env.Result, error) {
+	p, err := e.admit(ctx, c)
+	if err != nil {
+		return env.Result{}, err
+	}
+	return e.session.RunWithPolicy(ctx, c, p)
+}
+
+func (e managedPolicyExecutor) admit(ctx context.Context, c env.Command) (sandbox.Policy, error) {
 	p := e.policy
 	if effective, ok := sandbox.FromContext(ctx); ok {
 		p = effective
 	}
 	if err := sandbox.Within(e.ceiling, p); err != nil {
-		return env.Result{}, err
+		return p, err
 	}
 	// Invocation policies may change mode only; resource mappings remain immutable.
 	if p.WorkspaceRoot != e.policy.WorkspaceRoot || p.Network != e.policy.Network || len(p.AdditionalWritableRoots) != 0 {
-		return env.Result{}, sandbox.ErrDenied
+		return p, sandbox.ErrDenied
 	}
 	if len(c.Argv) == 0 || filepath.IsAbs(c.Dir) || strings.HasPrefix(filepath.Clean(c.Dir), "..") {
-		return env.Result{}, sandbox.ErrDenied
+		return p, sandbox.ErrDenied
 	}
-	return e.session.RunWithPolicy(ctx, c, p)
+	return p, nil
+}
+
+func (e managedPolicyExecutor) SupportsKeyed() bool { return e.session.SupportsKeyed() }
+
+func (e managedPolicyExecutor) RunKeyed(ctx context.Context, c sandbox.KeyedCommand) (sandbox.KeyedResult, error) {
+	p, err := e.admit(ctx, c.Command)
+	if err != nil {
+		return sandbox.KeyedResult{}, err
+	}
+	return e.session.RunKeyed(ctx, c, p)
 }

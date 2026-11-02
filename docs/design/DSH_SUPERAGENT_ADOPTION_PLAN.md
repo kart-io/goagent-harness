@@ -1,6 +1,6 @@
 # dsh-superagent 设计采纳计划
 
-状态：**SA1、SA2 已实现**（[effects](../../effects)、[background](../../background)），实施差异见“实施记录”。2026-11-02。依据 [dsh-superagent `6337fc8`](https://github.com/deepseek-ai/dsh-superagent-prototype/tree/6337fc823ce20251c8de8085948165c81aaa701e) 的 `docs/003-execution.md` 与 `docs/007-architecture.md`。对方自称研究原型，这里只读过设计文档，未核对其源码，也未运行。
+状态：**SA1、SA2 和 PI4 已实现**（[effects](../../effects)、[background](../../background)），实施差异和已知限制见“实施记录”。2026-11-02。依据 [dsh-superagent `6337fc8`](https://github.com/deepseek-ai/dsh-superagent-prototype/tree/6337fc823ce20251c8de8085948165c81aaa701e) 的 `docs/003-execution.md` 与 `docs/007-architecture.md`。对方自称研究原型，这里只读过设计文档，未核对其源码，也未运行。
 
 dsh-superagent 是建在 DeepSeek Harness 之上的主动式应用，与本仓库不在同一层。本计划只采纳下面两项机制，不引入 Ticket、Eval、Source、面板等应用层概念。Worker 免审批的执行方式不采纳，现有沙盒与审批不变。
 
@@ -108,15 +108,28 @@ dsh-superagent 是建在 DeepSeek Harness 之上的主动式应用，与本仓�
 | 决定与待办可以分开存放 | 队列是单个快照，待办数量和内容大小有上限 | `durable.Store` 不能枚举，单个快照才能取到全部待办 |
 | 同目标持续失败时不阻塞 | 结果未知的待办同样不阻塞后续待办，由 `Problems` 暴露 | 阻塞要等宿主裁决，可能无限等待；同键的新待办会被拒绝 |
 | 按人保留槽位 | 普通槽位外多一个，等待时人的输入优先于自动输入，再优先于新任务 | 与提案一致，取值固定为 1 个 |
-| 通知由 child run 身份去重 | 投递至少一次，由所有者按 `ChildID` 去重 | 通知崩溃后补发时无法确认是否已送达；不重新执行业务 |
+| 通知由 child run 身份去重 | 投递至少一次，每次状态变化有新的 `Generation`；`NotifyHandle` 用 `Handle.SteerOnce` 去重 | 去重键与输入须原子落盘，只在 Harness 里无法判断崩溃前是否已写入 |
 
-PI4 中尚未实现的部分：`owned/borrowed/Retain` 的沙箱责任转移，以及没有 workspace 的中间层保留上限。后台子 Agent 使用与前台相同的装配，权限不放宽；沙箱实例的生命周期仍由宿主负责，宿主须在关闭 Assembly 前停止 Manager。
+PI4 的实现结果：
 
-后台子工作遇到审批等待时记为失败（分类 `waiting`），不能续跑，宿主须让后台子 Agent 的工具不需要等待人工审批。
+- **沙箱责任：** 持有托管沙箱的后台 child 每次运行单独装配，实例归 child：进程停止时保留，重启后连回，结束时销毁。宿主用 `Registry.Resolve` 借出或保留的实例由宿主负责。不用托管沙箱的目标 preset 仍共用一个 Assembly。
+- **中间层上限：** 沙箱和网络上限在没有 workspace 的中间层也会传递，前台由 `TestReviewGrandchildCannotLoseAncestorCeilings` 覆盖，后台由 `TestBackgroundGrandchildCannotLoseAncestorCeilings` 覆盖。此前把这项记为未实现是错误的。
+- **预算：** 重启后从记录恢复，继续计入同一份账本。这是接入时漏掉的：重启后没有父调用的 ctx，上限曾因此消失。
+- **审批：** 后台 child 不调用同步的 `Host.Approver`，需要审批时进入 `waiting`。批准只放行这一次调用，不留下会话授权，也不落盘；`approval: never` 仍然优先。
+- **策略变更：** child 把装配清单固定在自己的日志里，恢复时不一致就记为失败（`manifest_changed`），不按新策略继续旧记录。
 
-验证范围：`effects` 和 `background` 的单元测试使用 `FileStore`，不校验锁的持有者。租约防护、重启恢复和接管在真实 Postgres 上做过一次性验证，没有进入仓库，CI 不覆盖。
+已知限制：
 
-## 范围
+- 用 `BuilderRunner` 时，停在模型请求中途的子工作重启后重发这次请求，同一回合最多 3 次。被打断的请求可能已经计费，所以可能重复计费，每次重发各占一份预算。自定义 `RunAgent` 须自行开启 `WithInterruptedModelResend`。
+- 后端实现 `KeyedExecutor` 时，`run_command` 重启后附着到原命令并取回结果，副作用只有一次；命令丢失（容器重启、状态被删）时不重跑，由模型检查后决定。没有这项能力的后端和 `git_commit`、文件修改工具停在中途时，子工作记为 `failed`（`attention`），文件和容器不会丢，但工作不会自动继续。这些情况都有真实 Docker 测试。
+- 重启后第一次连接实例就遇到网络错误时，子工作记为 `failed`（`execution`）并回收实例，不会等网络恢复再试。
+- Provider 没有实现 `sandbox.InstanceFinder` 时，分配中崩溃无法判断实例是否存在：子工作失败（`sandbox_unknown`），这条释放进入 `Manager.Problems` 由宿主处理。可能误报，不会漏报。
+- `CheckPolicy` 推迟到每次运行：后端不满足策略时子工作失败，`Build` 不报错。
+- 内层后台 child 的权限上限来自外层的模板装配，不是外层某次运行：宿主在外层运行中用 `Assembly.Permissions` 收窄的会话模式不会传给内层。
+- 通知只在同一执行键内去重。宿主换执行键开新运行时，新运行可能再收到一次：旧收件箱里未领取的输入不会带到新运行，这时重投是必要的，Harness 无法判断新对话里是否已有这条通知。
+
+验证范围：`effects` 和 `background` 的单元测试使用 `FileStore`，不校验锁的持有者；等待、重启、续跑、资源释放、租约接管和通知去重由 `integration/postgres` 在真实 Postgres 上验证；托管沙箱的生命周期由 `integration` 中的测试用 Provider 在真实 Docker 容器上验证，包括真实进程崩溃。两者都在 CI 运行。`sandboxtest` 是任何 Provider 都能运行的契约测试，`sandboxtest.Faults` 模拟响应丢失和连接失败，Docker 和自托管 OpenSandbox 的测试 Provider 都已通过。云厂商的 Provider 仍然没有验证过，下一步见 [沙箱路线图](SANDBOX_ROADMAP.md)。
+
 ## 范围
 
 上述边界情况已进入 `effects` 和 `background` 的测试。

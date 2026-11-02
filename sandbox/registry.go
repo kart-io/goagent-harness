@@ -27,6 +27,15 @@ type Registry struct {
 // Open can return a non-nil Session together with an error after allocation.
 // Always take responsibility for closing a returned session before handling err.
 func (r *Registry) Open(ctx context.Context, req Request) (*Session, error) {
+	if r == nil {
+		return nil, errors.New("sandbox: namespace, provider and scope are required")
+	}
+	return r.OpenWith(ctx, req, r.Resolve)
+}
+
+// OpenWith is Open with a caller-chosen binding in place of Resolve. The callback
+// receives the namespaced request and must itself honor Resolve when it applies.
+func (r *Registry) OpenWith(ctx context.Context, req Request, resolve func(Request) (Binding, error)) (*Session, error) {
 	if r == nil || strings.TrimSpace(r.Namespace) == "" || req.Provider == "" || strings.TrimSpace(req.Scope) == "" {
 		return nil, errors.New("sandbox: namespace, provider and scope are required")
 	}
@@ -62,11 +71,11 @@ func (r *Registry) Open(ctx context.Context, req Request) (*Session, error) {
 	}()
 	ctx = opCtx
 	// A length-prefixed namespace avoids ambiguous concatenation with scope.
-	req.Scope = fmt.Sprintf("%d:%s:%s", len(r.Namespace), r.Namespace, req.Scope)
+	req = r.qualify(req)
 	binding := Binding{}
 	var err error
-	if r.Resolve != nil {
-		binding, err = r.Resolve(req)
+	if resolve != nil {
+		binding, err = resolve(req)
 		if err != nil {
 			return nil, err
 		}
@@ -111,6 +120,60 @@ func (r *Registry) Open(ctx context.Context, req Request) (*Session, error) {
 		}
 	}
 	return session, nil
+}
+
+func (r *Registry) qualify(req Request) Request {
+	req.Scope = fmt.Sprintf("%d:%s:%s", len(r.Namespace), r.Namespace, req.Scope)
+	return req
+}
+
+// FindByScope asks the provider for the instance Create allocated for req. It
+// returns ErrUnsupported when the provider does not implement InstanceFinder.
+func (r *Registry) FindByScope(ctx context.Context, req Request) (string, bool, error) {
+	finder, ok := r.Providers[req.Provider].(InstanceFinder)
+	if !ok {
+		return "", false, ErrUnsupported
+	}
+	r.mu.Lock()
+	r.initLocked()
+	closing := r.closing
+	r.mu.Unlock()
+	if closing {
+		return "", false, ErrClosed
+	}
+	return finder.FindByScope(ctx, r.qualify(req))
+}
+
+// Destroy deletes an instance whose owner has finished, possibly in a later process.
+// It uses InstanceDestroyer when available; otherwise it connects like a borrower
+// and takes over deletion. An absent instance counts as deleted. Safe to retry.
+func (r *Registry) Destroy(ctx context.Context, req Request, id string) error {
+	if id == "" {
+		return errors.New("sandbox: destroy requires an instance id")
+	}
+	if destroyer, ok := r.Providers[req.Provider].(InstanceDestroyer); ok {
+		r.mu.Lock()
+		r.initLocked()
+		closing := r.closing
+		r.mu.Unlock()
+		if closing {
+			return ErrClosed
+		}
+		return ignoreMissing(destroyer.DestroyInstance(ctx, id, r.qualify(req)))
+	}
+	session, err := r.OpenWith(ctx, req, func(Request) (Binding, error) { return Binding{ID: id}, nil })
+	if session == nil {
+		return ignoreMissing(err)
+	}
+	session.info.Owned = true
+	return ignoreMissing(errors.Join(err, session.Close(ctx)))
+}
+
+func ignoreMissing(err error) error {
+	if errors.Is(err, ErrInstanceNotFound) {
+		return nil
+	}
+	return err
 }
 
 func (r *Registry) initLocked() {

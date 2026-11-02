@@ -147,7 +147,7 @@ executor: native 为显式新增选项；旧 local 仍表示不隔离，不能�
 7. 既有 Docker/权限/plan-mode/subagent/持久执行集成测试通过；macOS 与 Linux 后端分别在真实系统验证。
 
 首期实施顺序：策略/权限与回归测试 → Docker 适配 → macOS Seatbelt 与 Linux bwrap → 会话/提权恢复验证。
-Landlock、Windows native 作为后续里程碑；完成前明确 unavailable，不标成 DSH 完整平台对等。
+Landlock 已实现（Bubblewrap 不可用时回退），SSH 见 `sandbox/sshsandbox`。Windows native 尚未实现，继续明确 unavailable，不标成 DSH 完整平台对等。
 
 ## 参考
 

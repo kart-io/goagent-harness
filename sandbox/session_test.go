@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -214,4 +215,120 @@ func TestSessionDoesNotAdvertiseUnsupportedMutationProtection(t *testing.T) {
 	_, supported := s.FileSystem().(MutationProtector)
 	require.False(t, supported)
 	require.NoError(t, s.Close(context.Background()))
+}
+
+func TestRegistryDestroyConnectsAndDeletes(t *testing.T) {
+	e, r := fixture(t)
+	req := Request{Provider: "test", Scope: "s"}
+	require.NoError(t, r.Destroy(context.Background(), req, "sandbox-test"))
+	require.EqualValues(t, 1, e.destroys.Load())
+	require.EqualValues(t, 1, e.closes.Load())
+	require.NoError(t, r.Close(context.Background()))
+	require.ErrorIs(t, r.Destroy(context.Background(), req, "sandbox-test"), ErrClosed)
+	require.EqualValues(t, 1, e.destroys.Load())
+}
+
+func TestRegistryOpenWithUsesCallerBinding(t *testing.T) {
+	e, r := fixture(t)
+	r.Resolve = func(Request) (Binding, error) { return Binding{}, errors.New("不应调用 Resolve") }
+	s, err := r.OpenWith(context.Background(), Request{Provider: "test", Scope: "s"}, func(req Request) (Binding, error) {
+		require.Contains(t, req.Scope, "task-1", "回调收到的 Scope 带命名空间")
+		return Binding{Retain: true}, nil
+	})
+	require.NoError(t, err)
+	require.True(t, s.Info().Owned)
+	require.True(t, s.Info().Retained)
+	require.NoError(t, s.Close(context.Background()))
+	require.Zero(t, e.destroys.Load())
+	require.NoError(t, r.Close(context.Background()))
+}
+
+type findingProvider struct {
+	*testProvider
+	id    string
+	found bool
+	asked []Request
+}
+
+func (p *findingProvider) FindByScope(_ context.Context, r Request) (string, bool, error) {
+	p.asked = append(p.asked, r)
+	return p.id, p.found, nil
+}
+
+func TestRegistryFindByScope(t *testing.T) {
+	e, r := fixture(t)
+	req := Request{Provider: "test", Scope: "s"}
+	_, _, err := r.FindByScope(context.Background(), req)
+	require.ErrorIs(t, err, ErrUnsupported)
+
+	finder := &findingProvider{testProvider: &testProvider{e: e}, id: "i-1", found: true}
+	r.Providers["test"] = finder
+	id, found, err := r.FindByScope(context.Background(), req)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "i-1", id)
+	require.Contains(t, finder.asked[0].Scope, "task-1", "与 Create 收到的 Scope 相同，带命名空间")
+	require.NoError(t, r.Close(context.Background()))
+}
+
+func TestPlaceholderSessionHasNoInstance(t *testing.T) {
+	e, r := fixture(t)
+	session, err := r.Placeholder(Request{Provider: "test", Scope: "s", Network: true})
+	require.NoError(t, err)
+	require.True(t, session.Info().Capabilities.Network)
+	_, _, err = session.FileSystem().ReadFile(context.Background(), "a.txt")
+	require.ErrorIs(t, err, ErrUnsupported)
+	_, err = session.Executor().Run(context.Background(), env.Command{Argv: []string{"true"}})
+	require.ErrorIs(t, err, ErrUnsupported)
+	require.NoError(t, session.Close(context.Background()))
+	require.Zero(t, e.destroys.Load())
+	_, err = r.Placeholder(Request{Provider: "unknown", Scope: "s"})
+	require.Error(t, err)
+	require.NoError(t, r.Close(context.Background()))
+}
+
+// destroyingProvider 不能连接已停止的实例，但能直接删除。
+type destroyingProvider struct {
+	*testProvider
+	destroyed []string
+	err       error
+}
+
+func (p *destroyingProvider) Connect(context.Context, string, Request) (Environment, error) {
+	return nil, errors.New("实例已停止，无法连接")
+}
+
+func (p *destroyingProvider) DestroyInstance(_ context.Context, id string, _ Request) error {
+	p.destroyed = append(p.destroyed, id)
+	return p.err
+}
+
+func TestRegistryDestroyDoesNotNeedConnection(t *testing.T) {
+	p := &destroyingProvider{testProvider: &testProvider{}}
+	r := &Registry{Namespace: "ns", Providers: map[string]Provider{"p": p}}
+	req := Request{Provider: "p", Scope: "s", Network: true}
+	require.NoError(t, r.Destroy(context.Background(), req, "stopped"))
+	require.Equal(t, []string{"stopped"}, p.destroyed)
+
+	p.err = ErrInstanceNotFound
+	require.NoError(t, r.Destroy(context.Background(), req, "gone"), "已经不存在就是删除成功，重试不报错")
+
+	p.err = errors.New("网络断开")
+	require.ErrorContains(t, r.Destroy(context.Background(), req, "unknown"), "网络断开", "查不准时不能当作成功")
+
+	require.NoError(t, r.Close(context.Background()))
+	require.ErrorIs(t, r.Destroy(context.Background(), req, "late"), ErrClosed)
+}
+
+// goneProvider 没有实现 InstanceDestroyer，实例已不存在。
+type goneProvider struct{ *testProvider }
+
+func (goneProvider) Connect(context.Context, string, Request) (Environment, error) {
+	return nil, fmt.Errorf("连接失败: %w", ErrInstanceNotFound)
+}
+
+func TestRegistryDestroyTreatsMissingInstanceAsDone(t *testing.T) {
+	r := &Registry{Namespace: "ns", Providers: map[string]Provider{"p": goneProvider{&testProvider{}}}}
+	require.NoError(t, r.Destroy(context.Background(), Request{Provider: "p", Scope: "s", Network: true}, "gone"))
+	require.NoError(t, r.Close(context.Background()))
 }

@@ -97,6 +97,7 @@ presets:
 `maxSandbox` 默认等于 `sandbox`，规定人可以批准的最高文件模式；网络和目录不会随模式自动扩大。
 额外目录填写物理绝对路径；文件工具通过 `@root1/path` 等相对范围访问，命令使用执行端路径（Docker 主工作区为 `/workspace`）。
 native 的文件读取仍受宿主账户权限影响，不承诺凭据保密；文件工具继续保留显式路径范围。
+Linux 的 native 优先用 Bubblewrap，不可用时回退到 Landlock（隔离更弱，见 [sandbox](../sandbox/README.md)），manifest 的 `contract` 和 `enforcement` 会反映这一点。
 选择 native 时 Build 实际探测后端；Docker 为兼容现有装配流程，在 Run 前探测，未启动时 manifest 标记 `unverified`。
 因此 Build 成功本身不能作为 Docker 当前可用的证据。两种后端执行前都会重新检查。
 
@@ -183,6 +184,12 @@ presets:
 - `toolFilter` 在初始化之前生效：被完全过滤掉的组件（如允许列表中没有其工具的 MCP 服务）不初始化。允许列表引用不存在的工具时 Build 失败。
 - preset 引用有环时 Load 失败；嵌套深度超过 `maxDepth` 时 Build 失败。关闭父 Agent 同时关闭子 Agent。
 - `mode: background` 时工具立即返回 `child_id`，子 Agent 由 `Host.Background`（[`background.Manager`](../background)）持有，有稳定身份，重启后找回，完成后通知所有者。需要持久运行提供的 `ExecutionKey`。权限与前台相同。
+  - 另提供 `<toolName>_status` 查询工具，只看得到当前所有者的子工作；它和其他工具一样需要权限规则放行。
+  - 不调用 `Host.Approver`：需要审批时子工作进入 `waiting` 并通知所有者。宿主用 `ApprovalOf` 取出调用内容，用 `Manager.Resume` 和 `ApprovalAllow`、`ApprovalDeny` 答复，其他值按拒绝处理。
+  - 目标 preset 使用托管沙箱时，`Build` 不分配实例：每个 child 运行时分配自己的实例，重启后连回，结束时销毁。`Registry.Namespace` 须在重启后保持不变，Provider 须支持 `Connect`。宿主用 `Resolve` 借出或保留的实例由宿主负责。
+  - 实例在分配时崩溃：Provider 实现 `sandbox.InstanceFinder` 时按 Scope 查回；没有实现时子工作失败（`sandbox_unknown`），不会再分配一个，这条释放进入 `Manager.Problems` 由宿主处理。`Create` 返回错误但没有声明 `sandbox.ErrNotCreated` 时同样按结果未知处理：响应可能只是丢了。
+  - `Build` 时托管沙箱用占位环境校验，`CheckPolicy` 推迟到每次运行：后端不满足策略时子工作失败，`Build` 不报错。
+  - 前台子 Agent 位于后台链路中时保留日志，审批等待能穿到外层续跑；宿主自定义 `RunAgent` 时须在有日志时启用持久范围，并按需要开启 `WithInterruptedModelResend`，可参考 `BuilderRunner`。
 - 子 Agent 不写持久日志：父 Agent 的日志记录整次委派，中断的委派按父调用的策略整体重跑。
 
 ## 计划模式

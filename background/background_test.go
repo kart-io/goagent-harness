@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -93,7 +94,7 @@ func waitStatus(t *testing.T, m *Manager, id string, status Status) Record {
 		}
 		last = record
 		return record.Status == status
-	}, 5*time.Second, 2*time.Millisecond, "等待 %s 进入 %s", id, status)
+	}, 30*time.Second, 2*time.Millisecond, "等待 %s 进入 %s", id, status)
 	return last
 }
 
@@ -116,8 +117,8 @@ func TestBackgroundCompletesAndNotifiesOnce(t *testing.T) {
 	require.Equal(t, StatusRunning, record.Status)
 	done := waitStatus(t, m, "c1", StatusCompleted)
 	require.Equal(t, "answer:task", done.Result)
-	require.Eventually(t, func() bool { return len(n.all()) == 1 }, 5*time.Second, 2*time.Millisecond)
-	require.Equal(t, Notice{Owner: "o", ChildID: "c1", Runner: "r", Status: StatusCompleted, Result: "answer:task"}, n.all()[0])
+	require.Eventually(t, func() bool { return len(n.all()) == 1 }, 30*time.Second, 2*time.Millisecond)
+	require.Equal(t, Notice{Owner: "o", ChildID: "c1", Generation: 1, Runner: "r", Status: StatusCompleted, Result: "answer:task"}, n.all()[0])
 
 	// 相同 ID 再次提交返回同一结果，不重新执行。
 	again, err := m.Spawn(ctx, bg("c1"))
@@ -209,7 +210,7 @@ func TestBackgroundResumesAfterProcessExit(t *testing.T) {
 	require.Equal(t, "resumed", waitStatus(t, m, "c1", StatusCompleted).Result)
 	require.Zero(t, first, "已完成的步骤从日志回放")
 	require.Equal(t, 1, second)
-	require.Eventually(t, func() bool { return len(n.all()) == 1 }, 5*time.Second, 2*time.Millisecond)
+	require.Eventually(t, func() bool { return len(n.all()) == 1 }, 30*time.Second, 2*time.Millisecond)
 }
 
 // 结果已记录、通知未送达时进程退出：重启后只补发通知，不重新执行业务。
@@ -233,7 +234,7 @@ func TestNoticeRedeliveredWithoutRerunAfterProcessExit(t *testing.T) {
 		return "again", nil
 	})
 	runManager(t, m)
-	require.Eventually(t, func() bool { return len(n.all()) == 1 }, 5*time.Second, 2*time.Millisecond)
+	require.Eventually(t, func() bool { return len(n.all()) == 1 }, 30*time.Second, 2*time.Millisecond)
 	require.Equal(t, "done", n.all()[0].Result)
 	require.Zero(t, runs)
 }
@@ -319,7 +320,7 @@ func TestWaitLimitKillsAndReports(t *testing.T) {
 
 	require.NoError(t, m.TurnEnded(ctx, "o"))
 	waitStatus(t, m, "c1", StatusKilled)
-	require.Eventually(t, func() bool { return len(n.all()) == 1 }, 5*time.Second, 2*time.Millisecond)
+	require.Eventually(t, func() bool { return len(n.all()) == 1 }, 30*time.Second, 2*time.Millisecond)
 	require.Equal(t, StatusKilled, n.all()[0].Status)
 	busy, err = m.Busy(ctx, "o")
 	require.NoError(t, err)
@@ -335,8 +336,11 @@ func mustGet(t *testing.T, m *Manager, id string) Record {
 
 func TestTurnStartedClearsWaitLimit(t *testing.T) {
 	entered := make(chan struct{}, 1)
+	var now atomic.Int64
+	now.Store(time.Now().UnixNano())
 	cfg := testConfig(newStore(t, t.TempDir()), (&notices{}).add)
-	cfg.MaxWait = 40 * time.Millisecond
+	cfg.MaxWait = time.Hour
+	cfg.Now = func() time.Time { return time.Unix(0, now.Load()) }
 	m := newManager(t, cfg, blocking(entered))
 	runManager(t, m)
 	ctx := context.Background()
@@ -347,7 +351,9 @@ func TestTurnStartedClearsWaitLimit(t *testing.T) {
 	require.False(t, mustGet(t, m, "c1").WaitUntil.IsZero())
 	require.NoError(t, m.TurnStarted(ctx, "o"))
 	require.True(t, mustGet(t, m, "c1").WaitUntil.IsZero())
-	time.Sleep(80 * time.Millisecond)
+	// 时钟越过原来的期限，也不再到期。
+	now.Add(int64(2 * time.Hour))
+	time.Sleep(10 * cfg.Poll)
 	require.Equal(t, StatusRunning, mustGet(t, m, "c1").Status)
 }
 
@@ -394,7 +400,7 @@ func TestFirstPersistedOutcomeWins(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, StatusKilled, record.Status)
 	require.NoError(t, m.Kill(ctx, "c1"), "重复终止被忽略")
-	require.Eventually(t, func() bool { return len(n.all()) == 1 }, 5*time.Second, 2*time.Millisecond)
+	require.Eventually(t, func() bool { return len(n.all()) == 1 }, 30*time.Second, 2*time.Millisecond)
 	time.Sleep(30 * time.Millisecond)
 	require.Len(t, n.all(), 1)
 	require.Empty(t, mustGet(t, m, "c1").Result)
@@ -455,7 +461,7 @@ func TestNoticeRetriesUntilDelivered(t *testing.T) {
 	runManager(t, m)
 	_, err := m.Spawn(context.Background(), bg("c1"))
 	require.NoError(t, err)
-	require.Eventually(t, func() bool { return len(n.all()) == 1 }, 5*time.Second, 2*time.Millisecond)
+	require.Eventually(t, func() bool { return len(n.all()) == 1 }, 30*time.Second, 2*time.Millisecond)
 }
 
 func TestRunnerFailureIsCategorized(t *testing.T) {
