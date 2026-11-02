@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kart-io/goagent-harness/background"
 	"github.com/kart-io/goagent/builder"
 	"github.com/kart-io/goagent/core/durable"
 	"github.com/kart-io/goagent/interfaces"
@@ -33,6 +34,9 @@ type SubagentConfig struct {
 	MaxDepth *int `yaml:"maxDepth"`
 	// Timeout 是一次委派的上限，默认 10m。
 	Timeout time.Duration `yaml:"timeout"`
+	// Mode 默认 foreground：工具等待子 Agent 并返回答复。background 时工具立即返回 child_id，
+	// 子 Agent 由 Host.Background 持有，完成后通知所有者，需要持久运行提供的 ExecutionKey。
+	Mode string `yaml:"mode"`
 }
 
 func init() {
@@ -69,6 +73,12 @@ func init() {
 			if c.Timeout < 0 {
 				return errors.New("timeout 不能为负")
 			}
+			if c.Mode == "" {
+				c.Mode = string(background.ModeForeground)
+			}
+			if c.Mode != string(background.ModeForeground) && c.Mode != string(background.ModeBackground) {
+				return fmt.Errorf("mode %q 不合法，须是 foreground 或 background", c.Mode)
+			}
 			return nil
 		},
 		References: func(c *SubagentConfig) []string { return []string{c.Preset} },
@@ -79,6 +89,9 @@ func init() {
 func buildSubagent(ctx context.Context, a *Assembler, c *SubagentConfig) error {
 	if a.host.RunAgent == nil {
 		return errors.New("子 Agent 需要 Host.RunAgent")
+	}
+	if c.Mode == string(background.ModeBackground) && a.host.Background == nil {
+		return errors.New("后台子 Agent 需要 Host.Background")
 	}
 	depth := a.Depth() + 1
 	if depth > *c.MaxDepth {
@@ -130,6 +143,12 @@ func buildSubagent(ctx context.Context, a *Assembler, c *SubagentConfig) error {
 		}
 		a.closers = append(a.closers, child.Close)
 		tool.child = child
+		if c.Mode == string(background.ModeBackground) {
+			tool.manager, tool.runner, tool.agentID = a.host.Background, childHost.AgentID+"/"+c.ToolName, childHost.AgentID
+			a.host.Background.Register(tool.runner, func(ctx context.Context, task background.Task) (string, error) {
+				return a.host.RunAgent(ctx, child, task.Input)
+			})
+		}
 		if a.contribs[slot].info == nil {
 			a.contribs[slot].info = map[string]string{}
 		}
@@ -144,6 +163,9 @@ type subagentTool struct {
 	timeout           time.Duration
 	run               func(context.Context, *Assembly, string) (string, error)
 	child             *Assembly
+	// manager 非 nil 时工具提交后台子工作。
+	manager         *background.Manager
+	runner, agentID string
 }
 
 func (t *subagentTool) Name() string                   { return t.name }
@@ -159,6 +181,9 @@ func (t *subagentTool) Invoke(ctx context.Context, input *interfaces.ToolInput) 
 	if strings.TrimSpace(task) == "" {
 		return tools.Rejected("task must not be empty", nil), nil
 	}
+	if t.manager != nil {
+		return t.spawn(ctx, input, task)
+	}
 	answer, err := t.run(durable.WithJournal(ctx, nil), t.child, task)
 	if err != nil {
 		return nil, fmt.Errorf("子 Agent %s: %w", t.name, err)
@@ -166,10 +191,31 @@ func (t *subagentTool) Invoke(ctx context.Context, input *interfaces.ToolInput) 
 	return &interfaces.ToolOutput{Success: true, Result: map[string]any{"answer": answer}}, nil
 }
 
+// spawn 提交后台子工作。ID 取自持久调用的 ExecutionKey：工具调用重放时找回同一 child，不会启动第二份工作。
+func (t *subagentTool) spawn(ctx context.Context, input *interfaces.ToolInput, task string) (*interfaces.ToolOutput, error) {
+	if input.ExecutionKey == "" {
+		return nil, fmt.Errorf("子 Agent %s: 后台模式需要持久运行提供的 ExecutionKey", t.name)
+	}
+	owner := tools.SessionIDFrom(ctx)
+	if owner == "" {
+		owner = t.agentID
+	}
+	record, err := t.manager.Spawn(ctx, background.Task{ID: input.ExecutionKey, Owner: owner, Runner: t.runner, Input: task, Mode: background.ModeBackground})
+	if err != nil {
+		return nil, fmt.Errorf("子 Agent %s: %w", t.name, err)
+	}
+	return &interfaces.ToolOutput{Success: true, Result: map[string]any{"child_id": record.ID, "status": string(record.Status)}}, nil
+}
+
 // BuilderRunner 返回用 builder 运行子 Agent 的 Host.RunAgent：client 为模型，maxIterations 为子 Agent 的最大轮数。
 func BuilderRunner(client llm.Client, maxIterations int) func(context.Context, *Assembly, string) (string, error) {
 	return func(ctx context.Context, asm *Assembly, task string) (string, error) {
-		agent, err := Configure(builder.NewSimpleBuilder(client), asm).WithMaxIterations(maxIterations).Build()
+		b := Configure(builder.NewSimpleBuilder(client), asm).WithMaxIterations(maxIterations)
+		if durable.HasJournal(ctx) {
+			// 只有后台子工作带日志；执行键已区分每个 child，范围名固定即可。
+			b = b.WithDurableScope("subagent")
+		}
+		agent, err := b.Build()
 		if err != nil {
 			return "", err
 		}

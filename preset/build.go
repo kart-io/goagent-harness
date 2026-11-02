@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/kart-io/goagent-harness/background"
 	"github.com/kart-io/goagent-harness/permissions"
 	"github.com/kart-io/goagent-harness/sandbox"
 	"github.com/kart-io/goagent-harness/tools/coding"
@@ -49,6 +50,9 @@ type Host struct {
 	Dispatch tools.DispatchConfig
 	// RunAgent 运行子 Agent 并返回最终答复，subagent 组件需要它；模型由宿主选择，可用 BuilderRunner。
 	RunAgent func(ctx context.Context, asm *Assembly, task string) (string, error)
+	// Background 持有后台子 Agent，mode: background 的 subagent 组件需要它。宿主须在 Run 之前完成 Build 以登记 Runner，
+	// 并在关闭 Assembly 之前停止它。子 Agent 的审批由 Approver 处理：后台没有人等待时，宿主的 Approver 应尽快作答。
+	Background *background.Manager
 	// CompactionModel 生成对话摘要，compaction 组件需要它。
 	CompactionModel llm.Client
 }

@@ -182,6 +182,7 @@ presets:
 - 权限取交集：子 Agent 的每次调用先经过父 Agent 的调用前钩子与守卫（含父 Agent 的权限规则），模式、目录与网络和环境变量传递不得超过父 Agent；实时会话策略和祖先版本也会校验，父 Agent 的 `approval: never` 同样适用。
 - `toolFilter` 在初始化之前生效：被完全过滤掉的组件（如允许列表中没有其工具的 MCP 服务）不初始化。允许列表引用不存在的工具时 Build 失败。
 - preset 引用有环时 Load 失败；嵌套深度超过 `maxDepth` 时 Build 失败。关闭父 Agent 同时关闭子 Agent。
+- `mode: background` 时工具立即返回 `child_id`，子 Agent 由 `Host.Background`（[`background.Manager`](../background)）持有，有稳定身份，重启后找回，完成后通知所有者。需要持久运行提供的 `ExecutionKey`。权限与前台相同。
 - 子 Agent 不写持久日志：父 Agent 的日志记录整次委派，中断的委派按父调用的策略整体重跑。
 
 ## 计划模式
