@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -156,7 +157,7 @@ func (e *Executor) probe(ctx context.Context, p Policy) (Report, error) {
 			}
 			res, err = e.raw(ctx, q, env.Command{Argv: []string{curl, "--noproxy", "*", "--connect-timeout", "1", "--max-time", "2", "http://" + listener.Addr().String()}})
 			if err != nil || res.ExitCode == 0 {
-				return r, fmt.Errorf("%w: network-deny probe", ErrUnavailable)
+				return r, fmt.Errorf("%w: network-deny probe: exit %d: %v: %s", ErrUnavailable, res.ExitCode, err, res.Output)
 			}
 		}
 	}
@@ -194,7 +195,27 @@ func (e *Executor) environment() []string {
 	}
 	return out
 }
+
+// mountRaceAttempts 限制 raw 因宿主挂载变化重新启动沙箱的次数。
+const mountRaceAttempts = 5
+
+// raw 运行一条命令。bwrap 绑定 / 时逐个重挂宿主的挂载点，其他进程（如 containerd 的临时挂载）恰好卸载时启动失败。
+// 这时命令还没开始执行（启动标记未出现），可以安全地重新启动。
 func (e *Executor) raw(ctx context.Context, p Policy, c env.Command) (env.Result, error) {
+	for attempt := 1; ; attempt++ {
+		res, err := e.runOnce(ctx, p, c)
+		if !errors.Is(err, ErrUnavailable) || !bytes.Contains(res.Output, []byte("Unable to apply mount flags")) || attempt == mountRaceAttempts {
+			return res, err
+		}
+		select {
+		case <-ctx.Done():
+			return res, ctx.Err()
+		case <-time.After(time.Duration(attempt) * 20 * time.Millisecond):
+		}
+	}
+}
+
+func (e *Executor) runOnce(ctx context.Context, p Policy, c env.Command) (env.Result, error) {
 	if err := ctx.Err(); err != nil {
 		return env.Result{}, err
 	}

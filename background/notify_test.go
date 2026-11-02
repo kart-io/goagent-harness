@@ -114,3 +114,34 @@ func TestNotifyHandleWhenAgentIsIdle(t *testing.T) {
 	require.NoError(t, NotifyHandle(func(string) *builder.Handle { return h }, idle)(context.Background(), notice))
 	require.Len(t, seen, 1)
 }
+
+// 补发：同一通知只进入对话一次；等待和结束是两条通知。
+func TestNotifyHandleDeliversEachGenerationOnce(t *testing.T) {
+	model := &scriptModel{answers: []string{"第一轮", "第二轮"}}
+	tool := tools.NewBaseTool("lookup", "test", `{"type":"object"}`, func(context.Context, *interfaces.ToolInput) (*interfaces.ToolOutput, error) {
+		return &interfaces.ToolOutput{Success: true}, nil
+	})
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	agent, err := builder.NewSimpleBuilder(model).WithTools(tool).WithMaxIterations(4).
+		WithRequestHook(func(context.Context, *builder.ModelRequest) error {
+			once.Do(func() {
+				close(entered)
+				<-release
+			})
+			return nil
+		}).Build()
+	require.NoError(t, err)
+	h := agent.Start(context.Background(), "任务")
+	<-entered
+	notify := NotifyHandle(func(string) *builder.Handle { return h }, nil)
+	ctx := context.Background()
+	done := Notice{Owner: "o", ChildID: "c1", Generation: 2, Status: StatusCompleted, Result: "子工作结果"}
+	require.NoError(t, notify(ctx, Notice{Owner: "o", ChildID: "c1", Generation: 1, Status: StatusWaiting}))
+	require.NoError(t, notify(ctx, done))
+	require.NoError(t, notify(ctx, done))
+	require.Len(t, h.PendingInputs(), 2)
+	close(release)
+	_, err = h.Wait(ctx)
+	require.NoError(t, err)
+}

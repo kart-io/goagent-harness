@@ -219,6 +219,46 @@ func (s *Session) CheckPolicy(parent context.Context, p Policy) error {
 	return e.CheckPolicy(ctx, clone(p))
 }
 
+// SupportsKeyed 报告后端能否让命令在宿主停止后继续运行。
+func (s *Session) SupportsKeyed() bool {
+	_, ok := s.executor.(KeyedExecutor)
+	return ok
+}
+
+// RunKeyed runs or attaches to a keyed command under the session lifecycle.
+// Closing the session disconnects; it does not stop the command.
+func (s *Session) RunKeyed(parent context.Context, c KeyedCommand, p Policy) (KeyedResult, error) {
+	ctx, done, err := s.begin(parent)
+	if err != nil {
+		return KeyedResult{}, err
+	}
+	defer done()
+	e, ok := s.executor.(KeyedExecutor)
+	if !ok {
+		return KeyedResult{}, ErrUnsupported
+	}
+	if checker, ok := s.executor.(PolicyExecutor); ok {
+		if err = checker.CheckPolicy(ctx, clone(p)); err != nil {
+			return KeyedResult{}, err
+		}
+	}
+	return e.RunKeyed(ctx, c, clone(p))
+}
+
+// CancelKeyed stops a keyed command under the session lifecycle.
+func (s *Session) CancelKeyed(parent context.Context, key string, p Policy) (bool, error) {
+	ctx, done, err := s.begin(parent)
+	if err != nil {
+		return false, err
+	}
+	defer done()
+	e, ok := s.executor.(KeyedExecutor)
+	if !ok {
+		return false, ErrUnsupported
+	}
+	return e.CancelKeyed(ctx, key, clone(p))
+}
+
 // RunWithPolicy tracks policy-aware execution under the session lifecycle.
 func (s *Session) RunWithPolicy(parent context.Context, c env.Command, p Policy) (env.Result, error) {
 	ctx, done, err := s.begin(parent)

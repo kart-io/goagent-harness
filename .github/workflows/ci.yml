@@ -13,6 +13,19 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:17.6-alpine
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -23,7 +36,26 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # 拉取失败时在这里重试并报告清楚，不要混进用例失败。
+      - name: Pull test image
+        run: |
+          for attempt in 1 2 3; do
+            docker pull alpine:3.20 && exit 0
+            sleep $((attempt * 10))
+          done
+          exit 1
+
+      # Docker 用例要启动真实容器，默认的 10 分钟不够
       - name: Test
+        env:
+          GOAGENT_DOCKER_TESTS: "1"
+        run: go test -race -count=1 -timeout=25m ./...
+
+      # 独立模块，CI 里用真实 Postgres 覆盖租约防护
+      - name: Test on Postgres
+        working-directory: integration/postgres
+        env:
+          GOAGENT_PGSTORE_DSN: postgres://postgres:test@127.0.0.1:5432/postgres?sslmode=disable
         run: go test -race -count=1 ./...
 
       - name: golangci-lint

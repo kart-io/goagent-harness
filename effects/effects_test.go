@@ -85,7 +85,7 @@ func waitState(t *testing.T, q *Queue, key string, state State) Record {
 	require.Eventually(t, func() bool {
 		last = recordOf(t, q, key)
 		return last.State == state
-	}, 5*time.Second, 2*time.Millisecond, "等待 %s 进入 %s", key, state)
+	}, 30*time.Second, 2*time.Millisecond, "等待 %s 进入 %s", key, state)
 	return last
 }
 
@@ -282,7 +282,7 @@ func TestEnqueueWhileRunningQueuesBehind(t *testing.T) {
 	require.Eventually(t, func() bool {
 		records, err := queue.Records(ctx)
 		return err == nil && len(records) == 2 && records[0].State == StateDone && records[1].State == StateDone
-	}, 5*time.Second, 2*time.Millisecond)
+	}, 30*time.Second, 2*time.Millisecond)
 	mu.Lock()
 	defer mu.Unlock()
 	require.Equal(t, []string{`"first"`, `"second"`}, seen)
@@ -307,10 +307,11 @@ func TestTargetOrderHoldsUntilRepeatedFailure(t *testing.T) {
 	waitState(t, queue, "other", StateDone) // 其他目标不等待。
 	waitState(t, queue, "second", StateDone)
 	mu.Lock()
-	defer mu.Unlock()
-	require.GreaterOrEqual(t, failures, DefaultHoldAfter, "前面的待办连续失败到阈值后才放行")
-	first := recordOf(t, queue, "first")
-	require.Equal(t, StateWaiting, first.State)
+	seen := failures
+	mu.Unlock()
+	require.GreaterOrEqual(t, seen, DefaultHoldAfter, "前面的待办连续失败到阈值后才放行")
+	// 它还在重试，可能正在运行：等回到等待状态再看。
+	first := waitState(t, queue, "first", StateWaiting)
 	require.Equal(t, "execution", first.FailureKind)
 	require.NotContains(t, string(mustJSON(t, first)), "target down", "不保存第三方错误文本")
 	problems, err := queue.Problems(ctx)
@@ -385,7 +386,7 @@ func TestSettledRecordsAreBounded(t *testing.T) {
 	require.Eventually(t, func() bool {
 		records, err := queue.Records(ctx)
 		return err == nil && len(records) == 2 && records[1].Key == "d" && records[1].State == StateDone
-	}, 5*time.Second, 2*time.Millisecond)
+	}, 30*time.Second, 2*time.Millisecond)
 }
 
 func TestShutdownKeepsPendingAndStopsClaiming(t *testing.T) {
@@ -456,12 +457,18 @@ func TestRepeatedUnconfirmedBacksOff(t *testing.T) {
 	cfg.MinBackoff, cfg.MaxBackoff = 50*time.Millisecond, 50*time.Millisecond
 	queue := newQueue(t, cfg)
 	require.NoError(t, queue.Enqueue(context.Background(), effect("send", "a", "")))
+	begin := time.Now()
 	start(t, queue)
-	time.Sleep(220 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return calls >= 3
+	}, 30*time.Second, 2*time.Millisecond, "持续重试")
+	elapsed := time.Since(begin)
 	mu.Lock()
 	defer mu.Unlock()
-	require.GreaterOrEqual(t, calls, 2)
-	require.LessOrEqual(t, calls, 6)
+	// 磁盘慢时只会更少，所以只查上界：每次至少隔一个退避。
+	require.LessOrEqual(t, calls, int(elapsed/cfg.MinBackoff)+1, "没有空转")
 }
 
 func TestPanicIsRecordedAsFailure(t *testing.T) {

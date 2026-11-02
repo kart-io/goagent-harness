@@ -82,6 +82,85 @@ func TestNativeBoundaries(t *testing.T) {
 		t.Fatalf("readonly: %+v %v", r, err)
 	}
 }
+
+// fakeBwrap 让前 failures 次启动失败并输出 message，之后跳过隔离直接运行命令。
+func fakeBwrap(t *testing.T, failures int, message string) (count func() int) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("只有 Linux 用 bwrap")
+	}
+	dir := t.TempDir()
+	counter := filepath.Join(dir, "count")
+	script := fmt.Sprintf(`#!/bin/sh
+echo x >> %[1]s
+if [ "$(/usr/bin/wc -l < %[1]s)" -le %[2]d ]; then echo %[3]s >&2; exit 1; fi
+while [ "$1" != "--" ]; do shift; done
+shift
+exec "$@"
+`, shellQuote(counter), failures, shellQuote(message))
+	if err := os.WriteFile(filepath.Join(dir, "bwrap"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return func() int {
+		data, _ := os.ReadFile(counter)
+		return strings.Count(string(data), "\n")
+	}
+}
+
+const mountRaceOutput = `bwrap: Can't bind mount /oldroot/ on /newroot/: Unable to apply mount flags: remount "/newroot/tmp/containerd-mount1": Invalid argument`
+
+func TestNativeRetriesMountRace(t *testing.T) {
+	count := fakeBwrap(t, 2, mountRaceOutput)
+	e := Executor{Backend: "native"}
+	p := Policy{WorkspaceRoot: t.TempDir(), Mode: WorkspaceWrite, Network: NetworkDeny}
+	r, err := e.raw(context.Background(), p, env.Command{Argv: []string{"sh", "-c", "echo ran"}})
+	if err != nil || r.ExitCode != 0 || !strings.Contains(string(r.Output), "ran") {
+		t.Fatalf("%s %+v %v", r.Output, r, err)
+	}
+	if got := count(); got != 3 {
+		t.Fatalf("启动 %d 次", got)
+	}
+}
+
+func TestNativeMountRaceRetriesAreBounded(t *testing.T) {
+	count := fakeBwrap(t, 1000, mountRaceOutput)
+	e := Executor{Backend: "native"}
+	p := Policy{WorkspaceRoot: t.TempDir(), Mode: WorkspaceWrite, Network: NetworkDeny}
+	if _, err := e.raw(context.Background(), p, env.Command{Argv: []string{"true"}}); !errors.Is(err, ErrUnavailable) {
+		t.Fatal(err)
+	}
+	if got := count(); got != mountRaceAttempts {
+		t.Fatalf("启动 %d 次", got)
+	}
+}
+
+func TestNativeOtherStartupFailureIsNotRetried(t *testing.T) {
+	count := fakeBwrap(t, 1000, "bwrap: Creating new namespace failed: Operation not permitted")
+	e := Executor{Backend: "native"}
+	p := Policy{WorkspaceRoot: t.TempDir(), Mode: WorkspaceWrite, Network: NetworkDeny}
+	if _, err := e.raw(context.Background(), p, env.Command{Argv: []string{"true"}}); !errors.Is(err, ErrUnavailable) {
+		t.Fatal(err)
+	}
+	if got := count(); got != 1 {
+		t.Fatalf("启动 %d 次", got)
+	}
+}
+
+// 命令自己的输出碰巧相同时，它已经执行过了，绝不能重跑。
+func TestNativeCommandOutputIsNotMistakenForMountRace(t *testing.T) {
+	count := fakeBwrap(t, 0, "")
+	e := Executor{Backend: "native"}
+	p := Policy{WorkspaceRoot: t.TempDir(), Mode: WorkspaceWrite, Network: NetworkDeny}
+	r, err := e.raw(context.Background(), p, env.Command{Argv: []string{"sh", "-c", "echo " + shellQuote(mountRaceOutput) + "; exit 1"}})
+	if err != nil || r.ExitCode != 1 {
+		t.Fatalf("%+v %v", r, err)
+	}
+	if got := count(); got != 1 {
+		t.Fatalf("启动 %d 次", got)
+	}
+}
+
 func TestCancelledAndMismatchedPolicy(t *testing.T) {
 	root := t.TempDir()
 	e := Executor{Backend: "local", Policy: Policy{WorkspaceRoot: root, Mode: DangerFullAccess, Network: NetworkInherit}}

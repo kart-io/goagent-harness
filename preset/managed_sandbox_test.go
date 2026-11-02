@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -36,14 +37,19 @@ func (e *sandboxFixtureEnvironment) Close(context.Context) error   { e.closed.Ad
 func (e *sandboxFixtureEnvironment) Destroy(context.Context) error { e.destroyed.Add(1); return nil }
 
 type sandboxFixtureProvider struct {
-	t            *testing.T
-	requests     []sandbox.Request
-	environments map[string]*sandboxFixtureEnvironment
-	isolated     bool
+	t  *testing.T
+	mu sync.Mutex
+	// networkOverride 让实例的网络能力与请求不符。
+	networkOverride bool
+	requests        []sandbox.Request
+	environments    map[string]*sandboxFixtureEnvironment
+	isolated        bool
 }
 
 func (*sandboxFixtureProvider) Version() string { return "fixture-v1" }
 func (p *sandboxFixtureProvider) Create(_ context.Context, r sandbox.Request) (sandbox.Environment, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	root := p.t.TempDir()
 	fs, err := env.NewLocalFS(root)
 	if err != nil {
@@ -52,12 +58,14 @@ func (p *sandboxFixtureProvider) Create(_ context.Context, r sandbox.Request) (s
 	if err = os.WriteFile(filepath.Join(root, "remote.txt"), []byte("only remote data"), 0600); err != nil {
 		return nil, err
 	}
-	e := &sandboxFixtureEnvironment{id: fmt.Sprintf("fixture-%d", len(p.environments)+1), fs: fs, network: r.Network, isolated: p.isolated}
+	e := &sandboxFixtureEnvironment{id: fmt.Sprintf("fixture-%d", len(p.environments)+1), fs: fs, network: r.Network != p.networkOverride, isolated: p.isolated}
 	p.environments[e.id] = e
 	p.requests = append(p.requests, r)
 	return e, nil
 }
 func (p *sandboxFixtureProvider) Connect(_ context.Context, id string, r sandbox.Request) (sandbox.Environment, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.requests = append(p.requests, r)
 	return p.environments[id], nil
 }

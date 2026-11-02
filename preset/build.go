@@ -51,7 +51,7 @@ type Host struct {
 	// RunAgent 运行子 Agent 并返回最终答复，subagent 组件需要它；模型由宿主选择，可用 BuilderRunner。
 	RunAgent func(ctx context.Context, asm *Assembly, task string) (string, error)
 	// Background 持有后台子 Agent，mode: background 的 subagent 组件需要它。宿主须在 Run 之前完成 Build 以登记 Runner，
-	// 并在关闭 Assembly 之前停止它。子 Agent 的审批由 Approver 处理：后台没有人等待时，宿主的 Approver 应尽快作答。
+	// 并在关闭 Assembly 之前停止它。后台子 Agent 不调用 Approver：需要审批时进入 waiting，由宿主用 Resume 答复，见 ApprovalOf。
 	Background *background.Manager
 	// CompactionModel 生成对话摘要，compaction 组件需要它。
 	CompactionModel llm.Client
@@ -63,6 +63,10 @@ type buildOptions struct {
 	depth  int
 	parent *parentScope
 	filter *ToolFilter
+	// template 校验后台子 Agent 的装配，托管沙箱用占位环境：实例属于每次运行。
+	template bool
+	// childSandboxes 把本次装配分配的托管沙箱交给一个后台子工作。
+	childSandboxes *childSandboxes
 }
 
 // parentScope 是父 Agent 的权限：子 Agent 的调用同样要经过父 Agent 的调用前钩子与守卫，权限因此不超过父 Agent。
@@ -110,6 +114,8 @@ type Assembler struct {
 	sessionTools []string
 	denyApproval bool
 	closers      []func() error
+	// perRun 表示本次装配（含前台后代）用了占位沙箱，运行时要重新装配。
+	perRun bool
 
 	workspace     *coding.Workspace
 	workspaceInfo WorkspaceInfo
@@ -232,6 +238,8 @@ type Assembly struct {
 	// Permissions exposes host-only session switching; never register it as a model tool.
 	Permissions *permissions.Controller
 	Manifest    Manifest
+	// perRun 表示这是模板，不能直接运行，见 buildOptions.template。
+	perRun bool
 
 	closeOnce sync.Once
 	closers   []func() error
@@ -481,6 +489,7 @@ func (a *Assembler) publish(cfgs []any) (*Assembly, error) {
 		Pipeline:     pipeline,
 		Workspace:    a.workspace,
 		Permissions:  a.controller,
+		perRun:       a.perRun,
 		closers:      a.closers,
 	}
 	kept := map[string]bool{}

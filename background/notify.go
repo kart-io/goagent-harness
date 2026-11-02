@@ -12,10 +12,11 @@ import (
 // NotifyHandle 返回把通知投递给所有者 Handle 的 Config.Notify。lookup 返回所有者当前的 Handle，没有时返回 nil。
 // 轮次全部结束后 Handle 不再接收输入，也不会自行开启新轮次：这时调用 idle，由宿主决定如何继续（如用结果开启新一轮）；
 // idle 为 nil 或没有 Handle 时稍后重试，结果始终可用 Manager.Get 查询。
+// 同一通知对同一执行键的持久 Handle 只写入一次，崩溃后补发不重复；交给 idle 的通知可能重复，宿主用 Notice.Key 派生新运行的执行键即可去重。
 func NotifyHandle(lookup func(owner string) *builder.Handle, idle func(context.Context, Notice) error) func(context.Context, Notice) error {
 	return func(ctx context.Context, notice Notice) error {
 		if h := lookup(notice.Owner); h != nil {
-			err := h.Steer(noticeText(notice))
+			err := h.SteerOnce(notice.Key(), noticeText(notice))
 			if err == nil || !errors.Is(err, builder.ErrHandleDone) {
 				return err
 			}
@@ -28,6 +29,9 @@ func NotifyHandle(lookup func(owner string) *builder.Handle, idle func(context.C
 }
 
 func noticeText(notice Notice) string {
+	if notice.Status == StatusWaiting {
+		return fmt.Sprintf("后台子工作 %s 在等待宿主处理（如审批），结果稍后通知", notice.ChildID)
+	}
 	text := fmt.Sprintf("后台子工作 %s 已结束，状态 %s", notice.ChildID, notice.Status)
 	if notice.FailureKind != "" {
 		text += "，失败分类 " + notice.FailureKind

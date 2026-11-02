@@ -21,12 +21,17 @@ const maxLogCount = 100
 type commandTool struct {
 	*tools.BaseTool
 	timeout time.Duration
+	// reattach 表示中断后重新进入只会附着到原命令，见 keyedCommands。
+	reattach bool
 }
 
 // Commands and file mutations (including linter subprocesses) can take effect
 // before an error is returned. Without effect reconciliation, journal recovery
 // must ask the host to resolve failures instead of executing the same call again.
 func (t *commandTool) DurableOperationPolicy() durable.OperationPolicy {
+	if t.reattach {
+		return durable.OperationPolicy{MaxAttempts: keyedCommandAttempts, RetryInterrupted: true}
+	}
 	return durable.OperationPolicy{MaxAttempts: 1}
 }
 
@@ -34,6 +39,44 @@ func (t *commandTool) DispatchTimeout() time.Duration { return t.timeout + 10*ti
 
 func (w *Workspace) commandTool(name, desc, schema string, run func(context.Context, *interfaces.ToolInput) (*interfaces.ToolOutput, error)) interfaces.Tool {
 	return &commandTool{BaseTool: tools.NewBaseTool(name, desc, schema, run), timeout: w.commandTimeout}
+}
+
+// keyedCommandAttempts 限制同一次调用因重启重新进入的次数。
+const keyedCommandAttempts = 5
+
+// keyedCommands 由能让命令脱离连接继续运行的执行器实现（如托管沙箱）。
+type keyedCommands interface {
+	SupportsKeyed() bool
+	RunKeyed(context.Context, sandbox.KeyedCommand) (sandbox.KeyedResult, error)
+}
+
+func (w *Workspace) keyed() keyedCommands {
+	if k, ok := w.exec.(keyedCommands); ok && k.SupportsKeyed() {
+		return k
+	}
+	return nil
+}
+
+// runShell 在持久运行中按执行键运行：只有第一次尝试会启动，之后只附着，查不到结果也不重跑。
+func (w *Workspace) runShell(ctx context.Context, argv []string, dir string) (runResult, error) {
+	k, key := w.keyed(), durable.ExecutionKey(ctx)
+	if k == nil || key == "" || !durable.HasJournal(ctx) {
+		return w.execute(ctx, argv, dir)
+	}
+	start := time.Now()
+	res, err := k.RunKeyed(ctx, sandbox.KeyedCommand{Key: key, Command: env.Command{Argv: argv, Dir: dir}, Timeout: w.commandTimeout, AttachOnly: durable.OperationAttempt(ctx) > 1})
+	if errors.Is(err, sandbox.ErrUnsupported) {
+		return w.execute(ctx, argv, dir)
+	}
+	if err != nil {
+		return runResult{}, err
+	}
+	r := runResult{exitCode: res.ExitCode, timedOut: res.TimedOut, duration: time.Since(start)}
+	if res.TimedOut {
+		r.exitCode = -1
+	}
+	r.output, r.truncated = truncateOutput(res.Output, w.maxOutputBytes)
+	return r, nil
 }
 
 type runResult struct {
@@ -74,7 +117,7 @@ func truncateOutput(out []byte, limit int) (string, bool) {
 }
 
 func newRunCommandTool(w *Workspace) interfaces.Tool {
-	return w.commandTool(ToolRunCommand,
+	tool := w.commandTool(ToolRunCommand,
 		fmt.Sprintf("在工作区内用 sh -c 执行 shell 命令（如构建、测试、格式化），返回合并后的 stdout/stderr 与退出码。非零退出码是正常结果，请阅读输出后继续。单次超时 %s，输出过长时保留首尾。读写和搜索文件请使用专用工具。", w.commandTimeout),
 		`{
 			"type": "object",
@@ -101,7 +144,10 @@ func newRunCommandTool(w *Workspace) interfaces.Tool {
 				}
 				dir = rel
 			}
-			r, err := w.execute(ctx, []string{"sh", "-c", command}, dir)
+			r, err := w.runShell(ctx, []string{"sh", "-c", command}, dir)
+			if errors.Is(err, sandbox.ErrCommandLost) {
+				return tools.Rejected("这条命令上次运行被中断，现在既不在运行也没有结果，它可能已部分生效。没有重新执行。请先检查状态再决定是否重做。", nil), nil
+			}
 			if err != nil {
 				return resp.ExecutionError("command failed to run", nil, err)
 			}
@@ -113,6 +159,8 @@ func newRunCommandTool(w *Workspace) interfaces.Tool {
 				"duration":  r.duration.Round(time.Millisecond).String(),
 			}, nil)
 		})
+	tool.(*commandTool).reattach = w.keyed() != nil
+	return tool
 }
 
 // git 在工作区根目录执行 git。git 非零退出（如不是仓库、没有可提交的改动）作为业务拒绝交给模型。
