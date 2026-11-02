@@ -43,7 +43,7 @@ func TestNativeReal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Enforcement != "full" {
+	if report.Enforcement != "full" && (report.Runner != RunnerLandlock || report.Enforcement != "partial") {
 		t.Fatal(report)
 	}
 	r, err := e.Run(context.Background(), env.Command{Argv: []string{"sh", "-c", "echo yes > allowed"}})

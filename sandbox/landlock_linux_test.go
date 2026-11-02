@@ -299,6 +299,81 @@ func TestLandlockCancelKillsCommand(t *testing.T) {
 	}
 }
 
+// 没有 curl 时探测不了网络拒绝，宁可报不可用也不声称兑现了策略。
+func TestNativeWithoutCurlIsUnavailable(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	e := &Executor{Backend: "native", Runner: RunnerLandlock, Policy: Policy{WorkspaceRoot: realTemp(t), Mode: WorkspaceWrite, Network: NetworkDeny}}
+	if landlockABI() < landlockMinABI {
+		t.Skip("Landlock 不可用")
+	}
+	_, err := e.Probe(context.Background())
+	if !errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "curl") {
+		t.Fatal(err)
+	}
+}
+
+// 内核太旧时不能假装有隔离，也不能退化成不受限运行。
+func TestLandlockBelowMinimumABIIsUnavailable(t *testing.T) {
+	if landlockABI() >= landlockMinABI {
+		t.Skipf("内核 ABI %d 不够旧", landlockABI())
+	}
+	root, outside := realTemp(t), realTemp(t)
+	e := &Executor{Backend: "native", Runner: RunnerLandlock, Policy: Policy{WorkspaceRoot: root, Mode: WorkspaceWrite, Network: NetworkDeny}}
+	if _, err := e.Probe(context.Background()); !errors.Is(err, ErrUnavailable) {
+		t.Fatal(err)
+	}
+	p, err := effective(context.Background(), e.Policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(outside, "ran")
+	if _, err := e.raw(context.Background(), p, env.Command{Argv: []string{"sh", "-c", ": > " + shellQuote(marker)}}); !errors.Is(err, ErrUnavailable) {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("命令在没有隔离的情况下运行了")
+	}
+}
+
+// ABI 3 到 5 的已知缺口，也是上报 partial 的原因：写入仍受限，但能向沙箱外发信号。
+func TestLandlockPartialABIGap(t *testing.T) {
+	if abi := landlockABI(); abi < landlockMinABI || abi >= landlockFullABI {
+		t.Skipf("内核 ABI %d 不在 partial 范围", abi)
+	}
+	root, outside := realTemp(t), realTemp(t)
+	e := landlockExecutor(t, Policy{WorkspaceRoot: root, Mode: WorkspaceWrite, Network: NetworkDeny})
+	if report, err := e.Probe(context.Background()); err != nil || report.Enforcement != "partial" {
+		t.Fatalf("%+v %v", report, err)
+	}
+	if r := runShell(t, e, ": > "+shellQuote(filepath.Join(outside, "no"))); r.ExitCode == 0 {
+		t.Fatal("越界写入成功")
+	}
+	victim := exec.Command("sleep", "30")
+	if err := victim.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = victim.Process.Kill()
+		_ = victim.Wait()
+	}()
+	if r := runShell(t, e, fmt.Sprintf("kill -9 %d", victim.Process.Pid)); r.ExitCode != 0 {
+		t.Fatalf("缺口已不存在，可以更新 partial 的判断: %s", r.Output)
+	}
+}
+
+// 回退不是默认：bwrap 真实可用时不应选 Landlock。
+func TestNativeDefaultOrderPrefersBubblewrap(t *testing.T) {
+	bwrap := &Executor{Backend: "native", Runner: RunnerBubblewrap, Policy: Policy{WorkspaceRoot: realTemp(t), Mode: WorkspaceWrite, Network: NetworkDeny}}
+	if _, err := bwrap.Probe(context.Background()); err != nil {
+		t.Skipf("这台机器上 bwrap 不可用: %v", err)
+	}
+	auto := &Executor{Backend: "native", Policy: bwrap.Policy}
+	report, err := auto.Probe(context.Background())
+	if err != nil || report.Runner != RunnerBubblewrap {
+		t.Fatalf("%+v %v", report, err)
+	}
+}
+
 func TestNativeFallsBackToLandlock(t *testing.T) {
 	if landlockABI() < landlockMinABI {
 		t.Skip("Landlock 不可用")
