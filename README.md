@@ -6,7 +6,7 @@ GoAgent 提供模型与工具循环、类型化工作流、持久恢复、预算
 
 ## 模块与版本
 
-模块路径：`github.com/kart-io/goagent-harness`；Go 1.25 及以上；GoAgent 基线为 **v0.32.2**。
+模块路径：`github.com/kart-io/goagent-harness`；Go 1.26 及以上；GoAgent 基线为 **v0.32.2**。
 本仓库由 GoAgent 拆出，源码位于 [kart-io/goagent-harness](https://github.com/kart-io/goagent-harness)，默认分支为 `main`。当前尚未发布版本标签，可克隆仓库运行测试与示例。
 迁移来源与导入路径对照见 [迁移指南](docs/MIGRATION.md) 和 [NOTICE](NOTICE)。
 
