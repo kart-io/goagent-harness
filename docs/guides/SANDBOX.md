@@ -1,6 +1,6 @@
 # Sandbox 使用指南
 
-本仓库提供 native/docker/local 执行策略与供应商无关的 `Provider → Registry → Session` 生命周期。没有内置远端供应商 SDK、部署脚本或远端服务案例。现有本机策略与单次审批演示见 [sandbox](../../sandbox/README.md)、[permissions](../../permissions/README.md) 和 [可运行案例](../../examples/sandbox-permissions/main.go)。
+本仓库提供 native/docker/local 执行策略、供应商无关的 `Provider → Registry → Session` 生命周期，以及 SSH Provider（[`sandbox/sshsandbox`](../../sandbox/sshsandbox)）。没有内置云厂商 SDK、部署脚本或远端服务案例。现有本机策略与单次审批演示见 [sandbox](../../sandbox/README.md)、[permissions](../../permissions/README.md) 和 [可运行案例](../../examples/sandbox-permissions/main.go)。
 
 ## 本机与容器
 
@@ -13,6 +13,38 @@ go run ./examples/sandbox-permissions -approve
 ```
 
 案例可能因宿主不具备所需隔离能力而拒绝；应记录平台与拒绝原因，不能以拒绝当作成功执行。文件隔离、文件保密、容器和虚拟机是不同保证。
+
+Linux 上 `executor: native` 优先用 Bubblewrap，探测不通过时回退到 Landlock，恢复契约会记录回退。Landlock 比 Bubblewrap 弱：没有 PID 命名空间，脱离进程组的后代清理不到，也能看到宿主进程；内核低于 6.12 时还挡不住向外发信号，这时上报 `partial`。低于 6.2 时不可用。Windows 仍不可用。
+
+## SSH 远端
+
+`sshsandbox.Provider` 把一台 Linux 主机上的目录作为实例，命令由远端的 `sandbox-runner` 用远端的 Bubblewrap 或 Landlock 执行。
+
+先在远端安装辅助程序，并记下摘要：
+
+```sh
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o sandbox-runner ./cmd/sandbox-runner
+sha256sum sandbox-runner
+```
+
+```go
+provider, err := sshsandbox.New(sshsandbox.Config{
+    Addr: "host:22", User: "agent", Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)},
+    HostKeyCallback: hostKeys, // 必填，用 knownhosts.New 或 ssh.FixedHostKey
+    BaseDir:         "/home/agent/sandboxes",
+    RunnerPath:      "/usr/local/bin/sandbox-runner",
+    RunnerSHA256:    digest,
+})
+registry := &sandbox.Registry{Namespace: taskID, Providers: map[string]sandbox.Provider{"ssh": provider}}
+```
+
+- **远端依赖：** GNU coreutils 和 findutils（`stat --printf`）、`setsid`、`flock`、`curl`（`network: deny` 的探测要用），以及 Bubblewrap 或内核 6.2 以上的 Landlock。
+- **能力：** 实现了 `InstanceFinder`、`InstanceDestroyer` 和 `KeyedExecutor`。实例 ID 由 Scope 决定，所以 `Create` 响应丢失后也能查回。按键命令脱离 SSH 连接继续运行，断线和宿主重启后可以取回结果；普通命令在断线或取消时被终止。
+- **不支持：** `danger-full-access` 和额外可写目录，这两种策略直接拒绝。
+- **不防什么：** 隔离只限制写入、网络和进程，不限制读取，**同一台主机上的实例能读到彼此的文件**，也能读这个账户可读的任何文件。不要把不同租户放在同一账户下。远端主机和 `sandbox-runner` 属于可信基础设施，摘要校验防的是版本不符，不防恶意主机。
+- **隔离程度：** 用 `Provider.Probe` 查看实际的 `Runner` 和 `Enforcement`。要求绝对边界的宿主应当拒绝 `partial`。
+- **Landlock 下的已知缺口：** `sandbox-runner` 自己被 SIGKILL 时（比如 OOM）漏掉命令的子进程。Bubblewrap 没有这个问题。
+- **文件操作不进沙箱：** 文件工具走远端命令，路径边界由 `sshsandbox` 检查，运行中的命令可能在检查和操作的间隙替换路径。
 
 ## 宿主自定义 Provider
 
@@ -34,7 +66,7 @@ if session != nil {
 if err != nil { return err }
 ```
 
-上例仅演示接口装配，不是可独立运行的后端。`Registry.Close(cleanupCtx)` 由宿主在任务退出时调用，并处理失败、取消、清理重试。不能用已取消任务 context 作为唯一清理机会。借用实例和 Retain 实例不会被默认销毁。
+上例仅演示接口装配，不是可独立运行的后端。可运行的参考见 [integration/docker_provider_test.go](../../integration/docker_provider_test.go)，它只用于测试，设置 `GOAGENT_DOCKER_TESTS=1` 后运行。`Registry.Close(cleanupCtx)` 由宿主在任务退出时调用，并处理失败、取消、清理重试。不能用已取消任务 context 作为唯一清理机会。借用实例和 Retain 实例不会被默认销毁。后台子 Agent 的实例归子工作，生命周期见 [background](../../background/README.md)。
 
 ## Preset managed 装配
 
@@ -59,4 +91,8 @@ PolicyExecutor 的 CheckPolicy 在装配时检查默认策略及最高可审批�
 
 ## 持久调用的未知结果
 
-编码命令与文件修改工具为同一 journal/CallID 设置 MaxAttempts=1，权限/schema 装饰器保留该策略。首次 ErrUnconfirmed 保持错误；持久恢复遇到失败记录返回 ErrOperationAttention，不重新执行副作用。正常完成的结果仍可从日志回放。确需再次发起操作时，宿主先核对实际结果，再明确安排新调用；换 CallID 不自动证明重试安全。
+编码命令与文件修改工具为同一 journal/CallID 设置 MaxAttempts=1，权限/schema 装饰器保留该策略。首次 ErrUnconfirmed 保持错误；持久恢复遇到失败记录返回 ErrOperationAttention，不重新执行副作用。例外是后端实现 `KeyedExecutor` 时的 `run_command`，见下。正常完成的结果仍可从日志回放。确需再次发起操作时，宿主先核对实际结果，再明确安排新调用；换 CallID 不自动证明重试安全。
+
+`run_command` 在后端实现 `KeyedExecutor` 且运行带日志时按执行键运行：命令脱离连接继续跑，只有第一次尝试会启动，宿主重启后只附着并取回结果。查不到结果也不在运行时（`ErrCommandLost`，如容器重启或状态被删）不重跑，告诉模型状态未知，由它检查后决定。`git_commit` 和文件修改工具不受影响。需要审批的调用重启后要重新审批，被拒绝时命令被终止，模型会知道它已经启动过。
+
+没有原生能力的后端可以用 `CommandSupervisor`：它在沙箱内用 `sh`、`setsid`、`flock`、`mkfifo` 和 `head` 实现按键执行，超时也在沙箱内执行。要求执行器启动的进程能在调用返回后存活，状态放在 `/tmp/.goagent-commands`，随实例销毁，所以长期保留的实例要由所有者清理。
