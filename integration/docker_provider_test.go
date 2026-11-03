@@ -63,6 +63,8 @@ func dockerRun(ctx context.Context, args ...string) (string, error) {
 	var stdout, stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	// docker 是包装脚本时，杀掉它不会关闭子进程持有的输出管道，不设上限会卡到全局超时。
+	cmd.WaitDelay = time.Second
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("docker %s: %w: %s", args[0], err, stderr.String())
 	}

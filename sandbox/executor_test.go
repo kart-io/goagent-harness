@@ -431,6 +431,9 @@ func TestNativeUnixSocketInherit(t *testing.T) {
 	}
 	defer d.Close()
 	e := Executor{Backend: "native", Policy: Policy{WorkspaceRoot: t.TempDir(), Mode: WorkspaceWrite, Network: NetworkInherit}}
+	if _, err := e.Probe(context.Background()); err != nil {
+		t.Skip(err)
+	}
 	for _, code := range []string{"import socket; s=socket.socket(socket.AF_UNIX); s.connect(" + strconv.Quote(stream) + ")", "import socket; a=socket.socket(socket.AF_UNIX,socket.SOCK_DGRAM); a.sendto(b'probe'," + strconv.Quote(dgram) + ")"} {
 		if out, err := exec.Command(python, "-c", code).CombinedOutput(); err != nil {
 			t.Fatalf("positive %s %v", out, err)
