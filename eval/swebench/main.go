@@ -70,6 +70,7 @@ var (
 	parallel = flag.Int("parallel", 4, "并行题数")
 	pulls    = flag.Int("pulls", 3, "后台并行拉取镜像数")
 	runs     = flag.Int("runs", 1, "agent 每题重复次数")
+	model    = flag.String("model", "deepseek", "Agent 使用的模型：deepseek（deepseek-chat）或 minimax（MiniMax-M3）")
 	maxIter  = flag.Int("max-iterations", 100, "Agent 每题的模型请求上限")
 	timeout  = flag.Duration("timeout", 30*time.Minute, "Agent 每题的运行时限")
 	goEnv    = flag.String("go-env", "", "Agent 命令的 GOPATH、GOCACHE 与 HOME 所在目录，默认 <out>/goenv")
@@ -307,7 +308,7 @@ func runAgent(inst Instance, dir string) (string, string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout+10*time.Minute)
 	defer cancel()
 	abs, _ := filepath.Abs(dir)
-	cmd := exec.CommandContext(ctx, self, "-worker", inst.InstanceID, "-data", *dataPath, "-dir", abs, "-go-env", *goEnv,
+	cmd := exec.CommandContext(ctx, self, "-worker", inst.InstanceID, "-data", *dataPath, "-dir", abs, "-go-env", *goEnv, "-model", *model,
 		"-max-iterations", fmt.Sprint(*maxIter), "-timeout", timeout.String())
 	cmd.Env = append(os.Environ(), "GOTOOLCHAIN="+version, "HOME="+home, "GOPATH="+gopath,
 		"GOMODCACHE="+filepath.Join(gopath, "pkg", "mod"), "GOCACHE="+gocache, "GOFLAGS=-buildvcs=false")

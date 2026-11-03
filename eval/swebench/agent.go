@@ -65,14 +65,11 @@ func solve(inst Instance, dir string) error {
 		return err
 	}
 	p, _ := set.Get("swe")
-	opts := []llm.ClientOption{llm.WithAPIKey(os.Getenv("DEEPSEEK_API_KEY")), llm.WithModel("deepseek-chat"), llm.WithTemperature(0), llm.WithTimeout(3 * time.Minute),
-		// 服务端过载时流会在首包后停住或拖上几分钟，正常请求只要数秒；超时后由重试重发。
-		llm.WithStreamIdleTimeout(time.Minute), llm.WithStreamTimeout(2 * time.Minute)}
-	client, err := providers.NewDeepSeekWithOptions(opts...)
+	client, maxTokens, err := newModel()
 	if err != nil {
 		return err
 	}
-	summarizer, _ := providers.NewDeepSeekWithOptions(opts...)
+	summarizer, _, _ := newModel()
 	asm, err := preset.Build(context.Background(), p, preset.Host{
 		Root: ws, ArtifactDir: dir, CompactionModel: summarizer,
 		Approver: tools.ApproverFunc(func(context.Context, tools.ApprovalRequest) (tools.ApprovalResult, error) {
@@ -91,11 +88,11 @@ func solve(inst Instance, dir string) error {
 		return err
 	}
 	defer func() { _ = asm.Close() }()
-	timed := &timedClient{DeepSeekProvider: client, log: reqLog}
+	timed := &timedClient{modelClient: client, log: reqLog}
 	// Configure 的 3 次短重试扛不住服务端过载（503 too busy 常持续数十秒），之后按 5s 起、最长 60s 继续退避。
 	// 评测只取最终答复，流先输出几个字节再停住时同样可以重发。
 	longRetry := builder.RetryTransient(20, func(retry int) time.Duration { return min(5*time.Second<<max(retry-4, 0), time.Minute) })
-	agent, err := preset.Configure(builder.NewSimpleBuilder(timed), asm).WithRequestError(20, longRetry).WithReplayablePartialOutput().
+	agent, err := preset.Configure(builder.NewSimpleBuilder(timed), asm).WithRequestError(20, longRetry).WithReplayablePartialOutput().WithMaxTokens(maxTokens).
 		WithSessionID(inst.InstanceID).WithMaxIterations(*maxIter).WithTimeout(*timeout).Build()
 	if err != nil {
 		return err
@@ -111,9 +108,34 @@ func solve(inst Instance, dir string) error {
 	return nil
 }
 
+// modelClient 是 Agent 用到的模型能力：原生工具流，以及记录用量时读取的模型名。
+type modelClient interface {
+	llm.ToolStreamClient
+	ModelName() string
+}
+
+// newModel 按 -model 创建模型客户端，并给出每次请求的输出 token 上限（Builder 的设置覆盖客户端的）。
+func newModel() (modelClient, int, error) {
+	opts := []llm.ClientOption{llm.WithTemperature(0), llm.WithTimeout(3 * time.Minute),
+		// 服务端过载时流会在首包后停住或拖上几分钟，正常请求只要数秒；超时后由重试重发。
+		llm.WithStreamIdleTimeout(time.Minute), llm.WithStreamTimeout(2 * time.Minute)}
+	switch *model {
+	case "deepseek":
+		c, err := providers.NewDeepSeekWithOptions(append(opts, llm.WithAPIKey(os.Getenv("DEEPSEEK_API_KEY")), llm.WithModel("deepseek-chat"))...)
+		return c, 2000, err
+	case "minimax":
+		// MiniMax 的 OpenAI 兼容接口把思考过程以 <think> 写在 content 里，原样留在历史中正是它要求的交错思考用法；
+		// 思考也计入输出 token，默认的 2000 常在调用工具前就被耗尽。
+		c, err := providers.NewOpenAIWithOptions(append(opts, llm.WithAPIKey(os.Getenv("MINIMAX_CN_API_KEY")),
+			llm.WithBaseURL("https://api.minimaxi.com/v1"), llm.WithModel("MiniMax-M3"))...)
+		return c, 32000, err
+	}
+	return nil, 0, fmt.Errorf("未知模型 %q，可选 deepseek、minimax", *model)
+}
+
 // timedClient 记录每次模型请求的首包延迟、总耗时、结束原因与用量，用于定位卡住的请求。
 type timedClient struct {
-	*providers.DeepSeekProvider
+	modelClient
 	mu  sync.Mutex
 	n   int
 	log *os.File
@@ -145,7 +167,7 @@ func (c *timedClient) CompleteToolsStream(ctx context.Context, req *llm.Completi
 	}
 	start := time.Now()
 	c.record("#%d 开始 消息 %d 条 %d 字节", n, len(req.Messages), size)
-	in, err := c.DeepSeekProvider.CompleteToolsStream(ctx, req, ts)
+	in, err := c.modelClient.CompleteToolsStream(ctx, req, ts)
 	if err != nil {
 		c.record("#%d 失败 %s：%v", n, time.Since(start).Round(time.Millisecond), err)
 		return nil, err
