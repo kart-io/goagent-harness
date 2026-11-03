@@ -6,7 +6,7 @@
 
 分层、沙箱与权限、技能渐进加载、会话外置持久化符合主流做法。主要差距是容错：工具名或参数错误、工具执行失败、瞬时模型错误、子 Agent 失败、审批超时都会中止整次运行，而主流做法是把它们作为工具结果交还模型。其次缺少验证闭环、循环检测、环境自举和 Harness 级回归评测。
 
-P0 与 P1 已在 GoAgent v0.39.0 与本仓库主线完成，见「进展」；压缩、Request 通道与回归评测仍待处理。
+P0、P1 与 P2 的压缩、Request 通道已完成，见「进展」；回归评测仍待处理。
 
 ## 进展（2026-11-03）
 
@@ -19,6 +19,9 @@ P0 与 P1 已在 GoAgent v0.39.0 与本仓库主线完成，见「进展」；�
 | 循环检测 | `loop-detect` 组件：相同调用且结果相同（默认 3 次）、同一文件编辑（默认 8 次）时提醒，可选结束本轮 | `preset/loopdetect.go` |
 | Stop 语义 | `Stopping.Blocked` 不含 Steer；续跑后须剩一步带工具的请求，否则不执行钩子并记 `turn_stopping_skipped`；`stop_hook_active` 改用 `Blocked` | GoAgent v0.39.0；`preset/hooks.go` |
 | 结束前验证 | `verify-before-stop` 组件：有写入改动时运行检查命令，失败交还模型续跑，默认最多 3 次 | `preset/verifystop.go` |
+| 压缩保留关键信息 | `compaction` 版本 2：任务原文、最近的用户消息、获批计划原样保留，待办附在摘要后；摘要计入预算，失败时降级为省略说明；两次压缩间没有改文件或提交时提示停滞 | `preset/compaction.go` |
+| 超时与断流 | 运行超时不再报成 `unexpected EOF`；结束帧前的断流可重试 | GoAgent v0.39.1 |
+| Request 通道与收尾提示 | GoAgent `PromptScope` 增加 `Final`、`Deadline`，`ModelRequest` 增加 `Final`；`preset.Loop` 增加 `Request`；`wrap-up` 组件在最后一步和临近截止时要求模型收尾 | GoAgent v0.40.0；`preset/loop.go`、`preset/wrapup.go` |
 
 尚未解决：
 
@@ -28,6 +31,10 @@ P0 与 P1 已在 GoAgent v0.39.0 与本仓库主线完成，见「进展」；�
 - `verify-before-stop` 只看写入类工具的改动，`run_command` 改的文件不触发检查。
 
 真实模型实测（DeepSeek `deepseek-chat`，`examples/coding-agent`）：命令子进程只继承 `PATH`、`LANG`、`LC_ALL`、`TZ` 与 `envAllowlist`，本地执行器没有 `HOME` 时 `go test` 报 `build cache is required`。模型能在每条命令前自设 `GOCACHE` 绕过，但 `verify-before-stop` 的固定命令一直失败，3 次续跑全部浪费，模型请求从 6 次增至 22 次。示例已放行 `HOME`，文档注明检查命令受 `envAllowlist` 约束。修复后检查一次通过，三个新组件装配正常；`loop-detect` 与工具错误交还在实测中未被触发。
+
+`wrap-up` 实测（同一示例，`MaxIterations` 4，各 3 次）：没有该组件时，最后一步工具已撤掉，模型 3 次都把工具调用标记当作正文输出（`<｜｜DSML｜｜ calls>…`），答复里没有可读的结论。加上后 3 次都给出已完成的改动、明确说明未运行测试、未提交，并列出下一步。临近截止的提示只有单元测试，没有真实模型数据。
+
+压缩的真实模型测试（5 个包、7 个 bug、带隐藏测试）中，阈值 6000 时 4 次运行全部通过 9 项检查，每次压缩 5～8 次（修复前 16～36 次），压缩后的请求都带着任务原文与获批计划。摘要仍超出篇幅要求（约 1800～2600 字，要求 1000 字）。
 
 ## 符合度
 
@@ -42,8 +49,8 @@ P0 与 P1 已在 GoAgent v0.39.0 与本仓库主线完成，见「进展」；�
 | 生成与验证分离，判据机械化 | 仅有 `TurnStopping` 机制，无内置验证组件 | 缺失（已补 `verify-before-stop`） |
 | 循环检测与连续拒绝熔断 | 只有 `MaxIterations` | 缺失（已补 `loop-detect`，未做拒绝熔断） |
 | 工具错误交还模型 | 未知工具、非法参数直接中止（`goagent/builder/tool_events.go:261,268`，已核实） | 不符合（已修复，持久运行中工具 error 除外） |
-| 压缩保留关键信息 | 任务原文、计划、todo 不原样保留 | 风险 |
-| 推理强度按阶段分配 | 引擎 `RequestHook` 可改 `Reasoning`，`preset.Loop` 无 Request 通道 | 能力未接出 |
+| 压缩保留关键信息 | 任务原文、计划、todo 不原样保留 | 风险（已修复） |
+| 推理强度按阶段分配 | 引擎 `RequestHook` 可改 `Reasoning`，`preset.Loop` 无 Request 通道 | 能力未接出（已接出） |
 | Harness 回归评测 | agentbench 为单工具问答 | 缺失 |
 
 ## 已确认缺陷
@@ -82,7 +89,7 @@ P0 与 P1 已在 GoAgent v0.39.0 与本仓库主线完成，见「进展」；�
 
 - 编辑只做精确匹配，未命中只返回 not found，不处理 CRLF（`tools/coding/file_tools.go:219-230`）。
 - 读文件结果没有总字节上限（`tools/coding/file_tools.go:96-101`）。
-- 最后一步撤掉工具但不告知模型；`PromptScope` 无 Final 字段（`goagent/builder/loop_hooks.go:144`）。耗尽时只返回错误，没有部分答复。
+- 最后一步撤掉工具但不告知模型；`PromptScope` 无 Final 字段（`goagent/builder/loop_hooks.go:144`）。已补 `Final` 与 `wrap-up`。耗尽时只返回错误，没有部分答复。
 - 预算耗尽直接失败，没有收尾轮。
 
 ## 扩展点是否足够
@@ -91,8 +98,8 @@ P0 与 P1 已在 GoAgent v0.39.0 与本仓库主线完成，见「进展」；�
 | --- | --- | --- |
 | 退出前验证 | 基本可以，用 `TurnStopping` | `Stopping` 缺消息、剩余额度、不含 Steer 的续跑计数；需预留带工具的一步 |
 | 循环检测 | 可以，用 PreStep 或工具后置钩子 | 无 |
-| 时间预算提示 | 部分 | `PromptScope` 缺 ctx、Deadline、Remaining、Final |
-| 分阶段推理强度 | 引擎可以 | `preset.Loop` 与 `Configure` 缺 RequestHook 通道 |
+| 时间预算提示 | 可以（已补） | `PromptScope` 已有 `Deadline`、`Final`；剩余时间由 `Deadline` 计算 |
+| 分阶段推理强度 | 可以（已补） | `Assembler.AddRequest`，`Configure` 交给 `WithRequestHook` |
 
 ## 2026 年值得跟进的方案
 
@@ -127,6 +134,6 @@ P0 与 P1 已在 GoAgent v0.39.0 与本仓库主线完成，见「进展」；�
 | P1 ✅ | `env-context` 组件：目录摘要、OS、git 分支、工具链 | 提示词快照测试 |
 | P1 ✅ | 修正 Stop 语义：单独续跑计数与上限、预留一步工具额度、未验证标记；新增 `verify-before-stop` | Steer 后仍触发验证；最后一步未通过有标记 |
 | P1 ✅ | `loop-detect` 组件，参照 OpenHands 阈值并加拒绝熔断（拒绝熔断未做） | 构造重复调用序列断言注入提示或中断 |
-| P2 | 压缩保留任务原文、最新计划、todo；失败降级；计入预算 | 多次压缩后关键信息仍在 |
-| P2 | `preset.Loop` 增加 Request；`PromptScope` 增加 Final、Deadline | 组件可按步改推理强度、最后一步收到提示 |
+| P2 ✅ | 压缩保留任务原文、最新计划、todo；失败降级；计入预算 | 多次压缩后关键信息仍在 |
+| P2 ✅ | `preset.Loop` 增加 Request；`PromptScope` 增加 Final、Deadline | 组件可按步改推理强度、最后一步收到提示 |
 | P2 | SWE 式回归集：真实仓库加隐藏测试，从会话日志失败案例抽 20 到 50 题，固定资源并重复运行 | 作为以上改动的量化依据 |
