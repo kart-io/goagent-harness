@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/google/uuid v1.6.0
-	github.com/kart-io/goagent v0.39.1
+	github.com/kart-io/goagent v0.40.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/stretchr/testify v1.12.1
 	golang.org/x/crypto v0.58.0
