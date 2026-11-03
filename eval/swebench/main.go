@@ -60,13 +60,17 @@ type Result struct {
 	Error      string            `json:"error,omitempty"`
 	Seconds    float64           `json:"seconds"`
 	ModelCalls string            `json:"model_calls,omitempty"`
+	Model      string            `json:"model,omitempty"`
+	// Category 是结果的分类，见 categorize。
+	Category string `json:"category,omitempty"`
 }
 
 var (
 	dataPath = flag.String("data", "go.json", "数据集 JSON 数组")
 	outDir   = flag.String("out", "results", "结果目录")
-	modes    = flag.String("mode", "gold,agent", "逗号分隔，每题按顺序执行。gold：官方补丁（校验环境）；empty：空补丁（应判未解决）；agent：Agent 生成补丁，gold 未通过的题不跑")
-	ids      = flag.String("ids", "", "只跑这些题，逗号分隔")
+	modes    = flag.String("mode", "gold,agent", "逗号分隔，每题按顺序执行。gold：官方补丁（校验环境）；empty：空补丁（应判未解决）；agent：Agent 生成补丁，gold 未通过的题不跑；report：只汇总已有结果")
+	ids      = flag.String("ids", "", "只跑这些题，逗号分隔；@文件 从文件读取，每行一题，# 开头为注释")
+	baseline = flag.String("baseline", "", "与这份 summary.json 比较，原先解决、现在未解决的题列为退步，有退步时退出码为 2")
 	parallel = flag.Int("parallel", 4, "并行题数")
 	pulls    = flag.Int("pulls", 3, "后台并行拉取镜像数")
 	runs     = flag.Int("runs", 1, "agent 每题重复次数")
@@ -95,12 +99,21 @@ func main() {
 		return
 	}
 	if *ids != "" {
-		want := strings.Split(*ids, ",")
+		want, err := idList(*ids)
+		if err != nil {
+			fatal(err)
+		}
 		all = slices.DeleteFunc(all, func(i Instance) bool { return !slices.Contains(want, i.InstanceID) })
 	}
 	steps := strings.Split(*modes, ",")
-	if slices.Contains(steps, "agent") && os.Getenv("DEEPSEEK_API_KEY") == "" {
-		fatal(errors.New("需要 DEEPSEEK_API_KEY"))
+	if *modes == "report" {
+		finish(all)
+		return
+	}
+	if slices.Contains(steps, "agent") {
+		if _, _, err := newModel(); err != nil {
+			fatal(err)
+		}
 	}
 	if err := os.MkdirAll(*outDir, 0o755); err != nil {
 		fatal(err)
@@ -171,6 +184,34 @@ func main() {
 	}
 	wg.Wait()
 	fmt.Printf("\n本次 agent 运行：%d/%d 已解决\n", resolved, total)
+	finish(all)
+}
+
+// finish 汇总结果；相对基线有退步时退出码为 2，便于定时任务据此报警。
+func finish(all []Instance) {
+	if err := report(all); errors.Is(err, errRegressed) {
+		os.Exit(2)
+	} else if err != nil {
+		fatal(err)
+	}
+}
+
+// idList 解析 -ids：逗号分隔的题号，或 @文件。
+func idList(spec string) ([]string, error) {
+	if !strings.HasPrefix(spec, "@") {
+		return strings.Split(spec, ","), nil
+	}
+	data, err := os.ReadFile(spec[1:])
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, l := range strings.Split(string(data), "\n") {
+		if l = strings.TrimSpace(l); l != "" && !strings.HasPrefix(l, "#") {
+			out = append(out, l)
+		}
+	}
+	return out, nil
 }
 
 func load(path string) ([]Instance, error) {
@@ -238,6 +279,9 @@ func evaluate(inst Instance, mode string, run int, pullErr error) (r Result) {
 	dir := filepath.Join(*outDir, inst.InstanceID, fmt.Sprintf("%s-%d", mode, run))
 	defer func() {
 		r.Seconds = time.Since(start).Seconds()
+		if r.Category == "" {
+			r.Category = categorize(r, false)
+		}
 		b, _ := json.MarshalIndent(r, "", "  ")
 		_ = os.WriteFile(filepath.Join(dir, "result.json"), b, 0o644)
 	}()
@@ -260,6 +304,7 @@ func evaluate(inst Instance, mode string, run int, pullErr error) (r Result) {
 		if err != nil {
 			r.AgentError = err.Error()
 		}
+		r.Model = *model
 	default:
 		r.Error = "未知模式 " + mode
 		return r
@@ -278,6 +323,7 @@ func evaluate(inst Instance, mode string, run int, pullErr error) (r Result) {
 	status := parseGoTest(log)
 	r.FailToPass, r.PassToPass = pick(status, inst.FailToPass), pick(status, inst.PassToPass)
 	r.Resolved = allPass(r.FailToPass) && allPass(r.PassToPass)
+	r.Category = categorize(r, strings.Contains(log, applyFailed))
 	return r
 }
 
@@ -385,7 +431,7 @@ func runEval(inst Instance, dir string) (string, error) {
 	if err := os.WriteFile(filepath.Join(dir, "eval.sh"), []byte(inst.EvalScript), 0o644); err != nil {
 		return "", err
 	}
-	script := `cd /testbed && if [ -s /eval/patch.diff ]; then git apply -v /eval/patch.diff || { echo ">>>>> Patch Apply Failed"; exit 0; }; fi; bash /eval/eval.sh`
+	script := `cd /testbed && if [ -s /eval/patch.diff ]; then git apply -v /eval/patch.diff || { echo "` + applyFailed + `"; exit 0; }; fi; bash /eval/eval.sh`
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "docker", "run", "--rm", "-v", abs+":/eval:ro", inst.Image, "bash", "-c", script).CombinedOutput()
@@ -398,6 +444,8 @@ func runEval(inst Instance, dir string) (string, error) {
 	}
 	return string(out), nil
 }
+
+const applyFailed = ">>>>> Patch Apply Failed"
 
 // goTestLine 同 SWE-bench 的 parse_log_gotest。
 var goTestLine = regexp.MustCompile(`^\s*--- (PASS|FAIL|SKIP): (\S+) \(`)
