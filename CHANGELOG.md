@@ -14,7 +14,7 @@
 - 修复：SSH 实例销毁时如果按键命令刚启动、监管进程还没记下它的 pid，这条命令会漏掉并继续运行。现在先等 pid 写好（最多 3 秒）再结束监管进程。
 - 修复：Docker 后端的命令超时或取消落在容器创建期间时会留下 `created` 状态的容器。现在先创建再启动，创建不随 ctx 取消（上限 1 分钟），镜像不在本地时先拉取。
 - 修复：调用方的超时或取消在探测期间到期时，Docker 后端和固定 `Executor.Runner` 的 native 后端返回 `ErrUnavailable`，现在返回上下文错误，与自动选择后端时一致。
-- 依赖升级到 GoAgent v0.39.1，其中包含 v0.38.1 对 `env.DockerExecutor` 容器泄漏的修复；v0.39.1 起运行超时报告为超时而不是 `unexpected EOF`，结束帧前的连接中断会重试。
+- 依赖升级到 GoAgent v0.40.0，其中包含 v0.38.1 对 `env.DockerExecutor` 容器泄漏的修复；v0.39.1 起运行超时报告为超时而不是 `unexpected EOF`，结束帧前的连接中断会重试。
 - 新增 `effects`：持久的外部副作用队列，决定与待办原子提交，结果未知时不盲目重做。
 - 新增 `background`：有稳定身份的子工作，重启后找回，完成后通知所有者，提供等待上限、交接和为人保留的槽位。
 - `subagent` 组件增加 `mode: background`，由 `Host.Background` 持有子 Agent。默认仍是同步的前台模式。
