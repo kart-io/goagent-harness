@@ -10,6 +10,7 @@ import (
 // Loop 是组件贡献的循环扩展点，按组件在列表中的顺序排列。
 type Loop struct {
 	PreStep        []builder.PreStepHook
+	Request        []builder.RequestHook
 	RequestError   []builder.RequestErrorHook
 	TurnStopping   []builder.TurnStoppingHook
 	PromptSections []builder.PromptSection
@@ -18,6 +19,7 @@ type Loop struct {
 
 func (l *Loop) add(o Loop) {
 	l.PreStep = append(l.PreStep, o.PreStep...)
+	l.Request = append(l.Request, o.Request...)
 	l.RequestError = append(l.RequestError, o.RequestError...)
 	l.TurnStopping = append(l.TurnStopping, o.TurnStopping...)
 	l.PromptSections = append(l.PromptSections, o.PromptSections...)
@@ -27,6 +29,11 @@ func (l *Loop) add(o Loop) {
 // AddPreStep 追加 PreStep 钩子。
 func (a *Assembler) AddPreStep(h builder.PreStepHook) {
 	a.slot().loop.PreStep = append(a.slot().loop.PreStep, h)
+}
+
+// AddRequest 追加 Request 钩子，可按步调整推理强度、换模型。持久运行中须是确定性的：结果不入日志，恢复时重新执行。
+func (a *Assembler) AddRequest(h builder.RequestHook) {
+	a.slot().loop.Request = append(a.slot().loop.Request, h)
 }
 
 // AddRequestError 追加 RequestError 钩子。
@@ -58,7 +65,7 @@ const transientRetries = 3
 func Configure[C any, S core.State](b *builder.AgentBuilder[C, S], asm *Assembly) *builder.AgentBuilder[C, S] {
 	l := asm.Loop
 	return b.WithSystemPrompt(asm.SystemPrompt).WithTools(asm.Tools...).
-		WithPreStep(l.PreStep...).WithTurnStopping(l.TurnStopping...).
+		WithPreStep(l.PreStep...).WithRequestHook(l.Request...).WithTurnStopping(l.TurnStopping...).
 		WithPromptSections(l.PromptSections...).WithPromptContexts(l.PromptContexts...).
 		WithRequestError(0, append(slices.Clone(l.RequestError), builder.RetryTransient(transientRetries, nil))...).
 		WithToolErrorFeedback()

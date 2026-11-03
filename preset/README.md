@@ -88,6 +88,7 @@ presets:
 | `compaction` | `maxTokens`（默认 100000）、`keepTokens`（默认 maxTokens/4）、`instructions` | 单例。对话压缩，需要 `Host.CompactionModel`；保留用户原话、获批计划与待办，见下文 |
 | `loop-detect` | `window`（默认 30）、`repeats`（默认 3）、`fileEdits`（默认 8）、`editTools`（默认 write_file、edit_file、multi_edit）、`haltRepeats`（默认 0 不结束） | 单例。最近的工具调用中相同参数与相同结果重复，或同一文件反复编辑时，在工具结果后追加提醒，要求模型换一种做法；`haltRepeats` 达到时结束本轮并说明原因。只依据消息历史，持久运行恢复时结果一致 |
 | `verify-before-stop` | `command`（必填）、`maxAttempts`（默认 3） | 单例，需要 `workspace`。模型给出最终答复前在工作区运行检查命令，失败时把输出交还模型续跑；本会话还没有经写入类工具改动文件时不检查。命令与 `run_command` 同样只继承 `envAllowlist` 放行的环境变量 |
+| `wrap-up` | `warnBefore`（默认 1m） | 单例。本轮最后一次请求撤掉工具时，以及距运行截止不到 `warnBefore` 时，在运行上下文中要求模型收尾，说明已完成和未完成的部分；运行没有截止时间时只做前一种提示 |
 
 | 沙箱模式 | 文件工具 | 命令（含 git、lint） |
 |---|---|---|
@@ -261,6 +262,8 @@ func init() {
     })
 }
 ```
+
+循环扩展点经 `AddPreStep`、`AddRequest`、`AddRequestError`、`AddTurnStopping`、`AddPromptSection`、`AddPromptContext` 贡献，由 `Configure` 交给 Builder。`AddRequest` 的钩子可按 `ModelRequest.Step`、`Final` 修改推理强度或换模型；持久运行中它的结果不入日志，必须是确定性的。`PromptContext` 能看到 `PromptScope.Final` 与 `Deadline`。
 
 秘密只能经 `Secret` 或 `Value`（字面量或 `{secret: NAME}`）类型的字段引用，Build 时用 `a.Secret`/`a.Value` 解析；`Dump`、错误与 `Assembly.Manifest` 中只出现引用。`Manifest.Digest()` 覆盖组件配置与版本、工具 schema、提示词与工作区，可用于在恢复持久运行前核对执行语义。
 
