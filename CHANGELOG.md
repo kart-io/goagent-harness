@@ -2,6 +2,9 @@
 
 ## 未发布
 
+- 新增 `eval/swebench`：在 SWE-bench Multilingual 的 Go 子集（42 题，caddy、gin、prometheus、hugo、terraform）上评测编码 Agent。Agent 在 native 沙箱中解题，Go 版本按官方镜像设置 `GOTOOLCHAIN`；补丁由官方镜像和官方评测脚本判定，先用官方补丁校验每题的评测环境。镜像在后台预拉，中断后重跑跳过已完成的部分，每次模型请求的耗时写入 `requests.log`。
+- 变更：`workspace` 的 `executor` 缺省值由 `docker` 改为 `native`。本机沙箱每条命令只需毫秒级开销，Docker 后端每条命令都要创建容器。依赖旧缺省的配置需显式写 `executor: docker`；只写了 `image` 而没写 `executor` 的配置会报错并给出这条提示。native 后端不可用时 Build 失败，不回退。
+- 修复：沙箱执行器每条命令前都完整探测一次后端，Docker 后端要为此创建多个容器，在机械硬盘上一条 `true` 也要 35 秒左右。现在按后端、镜像、隔离实现、沙箱模式、网络与 `PATH` 缓存探测通过的结果，同一配置只探测一次：Docker 降到约 3 秒，native 从约 38 毫秒降到 5 毫秒。`Probe` 仍完整探测并刷新缓存；探测失败不缓存。
 - 新增 `wrap-up` 组件：本轮最后一次请求撤掉工具时，以及距运行截止不到 `warnBefore`（默认 1m）时，要求模型收尾并说明未完成的部分。原先两种情况模型都不知情。`preset.Loop` 增加 `Request`，组件经 `Assembler.AddRequest` 按步调整推理强度或换模型。需要 GoAgent 的 `PromptScope.Final`、`Deadline` 与 `ModelRequest.Final`。
 - `compaction`（版本 2）：压缩时原样保留第一条与最近的用户消息（合计约 `keepTokens/2`）和最近获批的计划，工作区待办附在摘要后；旧摘要不再被截断，交给摘要模型时去掉其中附带的待办。对话记录放在分隔标记中并在其后重申要求，防止摘要模型续写对话、编造没有发生的调用。摘要篇幅限制在 `keepTokens/2` 字以内；连续两次以上的压缩之间没有修改文件或提交时，在摘要后提示模型分批读取、根据已有结论直接修改或换思路，避免读入即被压缩再读、反复调试的循环。摘要请求计入根预算。摘要失败时退化为省略说明，并原样带上被压缩部分里的旧摘要，不再中止运行，取消与预算耗尽除外。可压缩的部分只剩旧摘要和原样保留的消息时不再压缩。超出上下文后的强制压缩只保留最近一次交互，原先在默认 `keepTokens` 下往往只压缩了第一条用户消息。
 - 修复：提权被拒时说明下一步怎么做。已在不低于所申请的模式下运行时先拒绝，并提示去掉 `sandbox_permissions` 与 `justification` 重试；没有稳定的会话与调用 ID 时同样提示，模型不再反复申请提权。
@@ -15,7 +18,7 @@
 - 修复：SSH 实例销毁时如果按键命令刚启动、监管进程还没记下它的 pid，这条命令会漏掉并继续运行。现在先等 pid 写好（最多 3 秒）再结束监管进程。
 - 修复：Docker 后端的命令超时或取消落在容器创建期间时会留下 `created` 状态的容器。现在先创建再启动，创建不随 ctx 取消（上限 1 分钟），镜像不在本地时先拉取。
 - 修复：调用方的超时或取消在探测期间到期时，Docker 后端和固定 `Executor.Runner` 的 native 后端返回 `ErrUnavailable`，现在返回上下文错误，与自动选择后端时一致。
-- 依赖升级到 GoAgent v0.40.0，其中包含 v0.38.1 对 `env.DockerExecutor` 容器泄漏的修复；v0.39.1 起运行超时报告为超时而不是 `unexpected EOF`，结束帧前的连接中断会重试。
+- 依赖升级到 GoAgent v0.41.0，其中包含 v0.38.1 对 `env.DockerExecutor` 容器泄漏的修复；v0.39.1 起运行超时报告为超时而不是 `unexpected EOF`，结束帧前的连接中断会重试。
 - 新增 `effects`：持久的外部副作用队列，决定与待办原子提交，结果未知时不盲目重做。
 - 新增 `background`：有稳定身份的子工作，重启后找回，完成后通知所有者，提供等待上限、交接和为人保留的槽位。
 - `subagent` 组件增加 `mode: background`，由 `Host.Background` 持有子 Agent。默认仍是同步的前台模式。

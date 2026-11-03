@@ -165,7 +165,7 @@ presets:
 	}
 
 	for name, data := range map[string]string{
-		"singleton": `presets: [{id: p, components: [{id: w1, use: workspace, config: {image: x}}, {id: w2, use: workspace, config: {image: x}}]}]`,
+		"singleton": `presets: [{id: p, components: [{id: w1, use: workspace, config: {executor: docker, image: x}}, {id: w2, use: workspace, config: {executor: docker, image: x}}]}]`,
 		"requires":  `presets: [{id: p, components: [{id: c, use: coding-tools}]}]`,
 	} {
 		_, err := Load(trusted(data))
@@ -292,7 +292,7 @@ func TestSandboxEnforcement(t *testing.T) {
 	require.ErrorContains(t, err, "只读方式挂载")
 
 	// 只读模式 + 只读挂载的容器：可以执行命令，但仍不提供写入类工具。
-	asm, err = build(workspacePreset("{sandbox: read-only, image: alpine:3}", "[]"))
+	asm, err = build(workspacePreset("{executor: docker, sandbox: read-only, image: alpine:3}", "[]"))
 	require.NoError(t, err)
 	require.ElementsMatch(t, []string{"read_file", "glob", "grep", "run_command", "git_status", "git_diff", "git_log", "todo_write"}, toolNames(asm))
 	require.True(t, asm.Manifest.Workspace.CommandsEnabled)
