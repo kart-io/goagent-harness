@@ -380,3 +380,33 @@ func TestApprovalTimeoutIsDenial(t *testing.T) {
 		t.Fatalf("want timeout denial, got %#v", out)
 	}
 }
+
+// Escalation denials must tell the model to retry without the escalation arguments.
+func TestEscalationDenialIsActionable(t *testing.T) {
+	c := fixture(t, nil, nil)
+	reason := func(call *tools.Call) string {
+		out, e := c.Around()(context.Background(), call, func(context.Context) (*interfaces.ToolOutput, error) {
+			t.Fatal("executed")
+			return nil, nil
+		})
+		if e != nil {
+			t.Fatal(e)
+		}
+		msg, ok := tools.RejectedResult(out)
+		if !ok {
+			t.Fatalf("not rejected: %+v", out)
+		}
+		return msg
+	}
+	same := escalation()
+	same.CallID = ""
+	same.Args["sandbox_permissions"] = "read-only"
+	if msg := reason(same); !strings.Contains(msg, "already running in read-only") || !strings.Contains(msg, "retry without sandbox_permissions") {
+		t.Fatal(msg)
+	}
+	noID := escalation()
+	noID.CallID = ""
+	if msg := reason(noID); !strings.Contains(msg, "unavailable in this run") || !strings.Contains(msg, "retry without sandbox_permissions") {
+		t.Fatal(msg)
+	}
+}

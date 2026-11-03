@@ -295,9 +295,9 @@ func TestCompactionInLoop(t *testing.T) {
 		compacted int
 	}{
 		// 超过阈值时在 PreStep 压缩。
-		{"pre step", `{maxTokens: 300, keepTokens: 100}`, []scriptTurn{call("1", "read_file", `{"path":"big.txt"}`), say("好")}, 1},
+		{"pre step", `{maxTokens: 300, keepTokens: 100}`, []scriptTurn{call("1", "read_file", `{"path":"big.txt"}`), call("2", "read_file", `{"path":"big.txt"}`), say("好")}, 2},
 		// 请求因超出上下文失败时压缩后重试。
-		{"request error", `{}`, []scriptTurn{call("1", "read_file", `{"path":"big.txt"}`), {err: errors.New("maximum context length exceeded")}, say("好")}, 2},
+		{"request error", `{}`, []scriptTurn{call("1", "read_file", `{"path":"big.txt"}`), call("2", "read_file", `{"path":"big.txt"}`), {err: errors.New("maximum context length exceeded")}, say("好")}, 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			model := &scriptModel{turns: tc.turns, summary: "读了 big.txt"}
@@ -311,7 +311,8 @@ func TestCompactionInLoop(t *testing.T) {
 			req := model.request(tc.compacted)
 			require.Equal(t, "system", req[0].Role)
 			require.Equal(t, summaryPrefix+"读了 big.txt", req[1].Content)
-			require.Equal(t, "assistant", req[2].Role, "the latest tool call and its result are kept")
+			require.Equal(t, llm.UserMessage("看看 big.txt"), req[2], "the task text is kept verbatim")
+			require.Equal(t, "assistant", req[3].Role, "the latest tool call and its result are kept")
 		})
 	}
 }

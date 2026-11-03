@@ -180,9 +180,6 @@ func (c *Controller) Around() tools.Around {
 			if !ok || !jok || strings.TrimSpace(justification) == "" {
 				return denied("invalid escalation arguments")
 			}
-			if strings.TrimSpace(call.SessionID) == "" || strings.TrimSpace(call.CallID) == "" {
-				return denied("stable session and call IDs are required")
-			}
 			candidate := p
 			candidate.Mode = sandbox.Mode(mode)
 			normalized, e := sandbox.Normalize(candidate)
@@ -190,11 +187,15 @@ func (c *Controller) Around() tools.Around {
 				return denied(e.Error())
 			}
 			candidate = normalized
+			// Denials tell the model what to do next; otherwise it repeats the same request.
 			if candidate.Mode.Rank() <= p.Mode.Rank() {
-				return denied("requested mode must be strictly wider")
+				return denied(fmt.Sprintf("already running in %s, which covers %s; retry without sandbox_permissions and justification", p.Mode, candidate.Mode))
 			}
 			if e = c.checkCeiling(ctx, call.SessionID, candidate); e != nil {
 				return denied(e.Error())
+			}
+			if strings.TrimSpace(call.SessionID) == "" || strings.TrimSpace(call.CallID) == "" {
+				return denied("sandbox escalation is unavailable in this run (no stable session and call IDs); retry without sandbox_permissions and justification")
 			}
 			if c.config.Approver == nil {
 				return denied("no approver available")
