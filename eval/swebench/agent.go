@@ -93,8 +93,9 @@ func solve(inst Instance, dir string) error {
 	defer func() { _ = asm.Close() }()
 	timed := &timedClient{DeepSeekProvider: client, log: reqLog}
 	// Configure 的 3 次短重试扛不住服务端过载（503 too busy 常持续数十秒），之后按 5s 起、最长 60s 继续退避。
-	longRetry := builder.RetryTransient(10, func(retry int) time.Duration { return min(5*time.Second<<max(retry-4, 0), time.Minute) })
-	agent, err := preset.Configure(builder.NewSimpleBuilder(timed), asm).WithRequestError(10, longRetry).
+	// 评测只取最终答复，流先输出几个字节再停住时同样可以重发。
+	longRetry := builder.RetryTransient(20, func(retry int) time.Duration { return min(5*time.Second<<max(retry-4, 0), time.Minute) })
+	agent, err := preset.Configure(builder.NewSimpleBuilder(timed), asm).WithRequestError(20, longRetry).WithReplayablePartialOutput().
 		WithSessionID(inst.InstanceID).WithMaxIterations(*maxIter).WithTimeout(*timeout).Build()
 	if err != nil {
 		return err

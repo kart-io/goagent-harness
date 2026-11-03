@@ -213,16 +213,22 @@ func prefetch(all []Instance) map[string]chan error {
 }
 
 // doneRuns 读出已有结果，键为 题/模式/次，值为是否解决；中断后重跑时跳过已完成的部分。
+// 因模型服务出错（503、断流）而中止的 Agent 运行不算完成：它反映的是服务状态，不是 Agent 的能力。
 func doneRuns(path string) map[string]bool {
 	done := map[string]bool{}
 	data, _ := os.ReadFile(path)
 	for _, line := range strings.Split(string(data), "\n") {
 		var r Result
-		if json.Unmarshal([]byte(line), &r) == nil && r.InstanceID != "" && r.Error == "" {
+		if json.Unmarshal([]byte(line), &r) == nil && r.InstanceID != "" && r.Error == "" && !modelFailure(r) {
 			done[fmt.Sprintf("%s/%s/%d", r.InstanceID, r.Mode, r.Run)] = r.Resolved
 		}
 	}
 	return done
+}
+
+// modelFailure 报告 Agent 运行是否因模型请求失败而中止。
+func modelFailure(r Result) bool {
+	return r.Mode == "agent" && !r.Resolved && strings.Contains(r.AgentError, "[LLM_REQUEST]")
 }
 
 func evaluate(inst Instance, mode string, run int, pullErr error) (r Result) {
