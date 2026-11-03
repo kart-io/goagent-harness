@@ -481,3 +481,29 @@ func TestNativeUnixSocketInherit(t *testing.T) {
 		t.Fatalf("inherit TCP blocked %s %v", r.Output, err)
 	}
 }
+
+// 探测通过后同一配置的 Run 不再探测：Docker 后端每次探测都要创建多个容器。
+func TestRunReusesProbe(t *testing.T) {
+	count := fakeBwrap(t, 0, "")
+	e := Executor{Backend: "native", Runner: RunnerBubblewrap, Policy: Policy{WorkspaceRoot: t.TempDir(), Mode: DangerFullAccess, Network: NetworkInherit}}
+	if _, err := e.Run(context.Background(), env.Command{Argv: []string{"true"}}); err != nil {
+		t.Fatal(err)
+	}
+	first := count()
+	if first < 2 {
+		t.Fatalf("首次 Run 应先探测：启动 %d 次", first)
+	}
+	e.Policy.WorkspaceRoot = t.TempDir()
+	if _, err := e.Run(context.Background(), env.Command{Argv: []string{"true"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := count() - first; got != 1 {
+		t.Fatalf("第二次 Run 启动 %d 次，应只执行命令", got)
+	}
+	if _, err := e.Probe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := count() - first - 1; got < 1 {
+		t.Fatal("Probe 应重新探测")
+	}
+}

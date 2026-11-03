@@ -59,7 +59,7 @@ func (e *Executor) Run(ctx context.Context, c env.Command) (env.Result, error) {
 	if err != nil || !contains(p.WorkspaceRoot, dir) {
 		return env.Result{}, ErrDenied
 	}
-	report, err := e.probe(ctx, p)
+	report, err := e.cachedProbe(ctx, p)
 	if err != nil {
 		return env.Result{}, err
 	}
@@ -71,12 +71,47 @@ func (e *Executor) Run(ctx context.Context, c env.Command) (env.Result, error) {
 	verified.Runner = report.Runner
 	return verified.raw(ctx, p, c)
 }
+
+// Probe 总是完整探测，成功时刷新 Run 使用的缓存。
 func (e *Executor) Probe(ctx context.Context) (Report, error) {
 	p, err := effective(ctx, e.Policy)
 	if err != nil {
 		return Report{}, err
 	}
-	return e.probe(ctx, p)
+	report, err := e.probe(ctx, p)
+	if err == nil {
+		probeCache.Store(e.probeKey(p), report.Runner)
+	}
+	return report, err
+}
+
+// probeKey 是探测结果依赖的全部输入。探测只用临时目录，结果与工作区路径无关；
+// 后端和 bwrap、curl 等工具按 PATH 查找，所以 PATH 也在其中。
+type probeKey struct {
+	backend, image, runner, path string
+	mode                         Mode
+	network                      Network
+}
+
+func (e *Executor) probeKey(p Policy) probeKey {
+	return probeKey{e.Backend, e.Image, e.Runner, os.Getenv("PATH"), p.Mode, p.Network}
+}
+
+// probeCache 记录探测通过的组合与选中的实现。探测要起多次沙箱，Docker 后端每次都要创建容器，
+// 每条命令都探测会让一条命令多花数十秒；失败不缓存，下次 Run 重新探测。
+var probeCache sync.Map // probeKey -> runner
+
+// cachedProbe 返回探测通过时选中的实现；Run 只用到 Runner。
+func (e *Executor) cachedProbe(ctx context.Context, p Policy) (Report, error) {
+	key := e.probeKey(p)
+	if runner, ok := probeCache.Load(key); ok {
+		return Report{Backend: e.Backend, Runner: runner.(string)}, nil
+	}
+	report, err := e.probe(ctx, p)
+	if err == nil {
+		probeCache.Store(key, report.Runner)
+	}
+	return report, err
 }
 
 // probe 选出第一个通过完整探测的实现。探测包含越界写入和网络的反向验证，所以 bwrap 能启动但兑现不了策略时也不会被选中。
