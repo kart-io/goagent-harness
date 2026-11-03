@@ -70,6 +70,7 @@ var (
 	parallel = flag.Int("parallel", 4, "并行题数")
 	pulls    = flag.Int("pulls", 3, "后台并行拉取镜像数")
 	runs     = flag.Int("runs", 1, "agent 每题重复次数")
+	model    = flag.String("model", "deepseek", "Agent 使用的模型：deepseek（deepseek-chat）或 minimax（MiniMax-M3）")
 	maxIter  = flag.Int("max-iterations", 100, "Agent 每题的模型请求上限")
 	timeout  = flag.Duration("timeout", 30*time.Minute, "Agent 每题的运行时限")
 	goEnv    = flag.String("go-env", "", "Agent 命令的 GOPATH、GOCACHE 与 HOME 所在目录，默认 <out>/goenv")
@@ -213,16 +214,22 @@ func prefetch(all []Instance) map[string]chan error {
 }
 
 // doneRuns 读出已有结果，键为 题/模式/次，值为是否解决；中断后重跑时跳过已完成的部分。
+// 因模型服务出错（503、断流）而中止的 Agent 运行不算完成：它反映的是服务状态，不是 Agent 的能力。
 func doneRuns(path string) map[string]bool {
 	done := map[string]bool{}
 	data, _ := os.ReadFile(path)
 	for _, line := range strings.Split(string(data), "\n") {
 		var r Result
-		if json.Unmarshal([]byte(line), &r) == nil && r.InstanceID != "" && r.Error == "" {
+		if json.Unmarshal([]byte(line), &r) == nil && r.InstanceID != "" && r.Error == "" && !modelFailure(r) {
 			done[fmt.Sprintf("%s/%s/%d", r.InstanceID, r.Mode, r.Run)] = r.Resolved
 		}
 	}
 	return done
+}
+
+// modelFailure 报告 Agent 运行是否因模型请求失败而中止。
+func modelFailure(r Result) bool {
+	return r.Mode == "agent" && !r.Resolved && strings.Contains(r.AgentError, "[LLM_REQUEST]")
 }
 
 func evaluate(inst Instance, mode string, run int, pullErr error) (r Result) {
@@ -301,7 +308,7 @@ func runAgent(inst Instance, dir string) (string, string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout+10*time.Minute)
 	defer cancel()
 	abs, _ := filepath.Abs(dir)
-	cmd := exec.CommandContext(ctx, self, "-worker", inst.InstanceID, "-data", *dataPath, "-dir", abs, "-go-env", *goEnv,
+	cmd := exec.CommandContext(ctx, self, "-worker", inst.InstanceID, "-data", *dataPath, "-dir", abs, "-go-env", *goEnv, "-model", *model,
 		"-max-iterations", fmt.Sprint(*maxIter), "-timeout", timeout.String())
 	cmd.Env = append(os.Environ(), "GOTOOLCHAIN="+version, "HOME="+home, "GOPATH="+gopath,
 		"GOMODCACHE="+filepath.Join(gopath, "pkg", "mod"), "GOCACHE="+gocache, "GOFLAGS=-buildvcs=false")
