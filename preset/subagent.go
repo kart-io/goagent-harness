@@ -14,7 +14,9 @@ import (
 	"github.com/kart-io/goagent-harness/effects"
 	"github.com/kart-io/goagent-harness/sandbox"
 	"github.com/kart-io/goagent/builder"
+	"github.com/kart-io/goagent/core/budget"
 	"github.com/kart-io/goagent/core/durable"
+	agentErrors "github.com/kart-io/goagent/errors"
 	"github.com/kart-io/goagent/interfaces"
 	"github.com/kart-io/goagent/llm"
 	"github.com/kart-io/goagent/tools"
@@ -259,9 +261,19 @@ func (t *subagentTool) Invoke(ctx context.Context, input *interfaces.ToolInput) 
 	}
 	answer, err := t.run(runCtx, t.child, task)
 	if err != nil {
+		if childFailureRecoverable(ctx, err) {
+			return tools.Rejected(fmt.Sprintf("子 Agent %s 未完成任务：%v", t.name, err), nil), nil
+		}
 		return nil, fmt.Errorf("子 Agent %s: %w", t.name, err)
 	}
 	return &interfaces.ToolOutput{Success: true, Result: map[string]any{"answer": answer}}, nil
+}
+
+// childFailureRecoverable 判断子 Agent 的失败能否交给父 Agent 处理：父运行已结束、共享预算耗尽、
+// 等待审批（须穿透到外层）与 panic 仍中止父 Agent。
+func childFailureRecoverable(ctx context.Context, err error) bool {
+	var panicErr *agentErrors.PanicError
+	return ctx.Err() == nil && durable.Waits(err) == nil && !errors.Is(err, budget.ErrBudgetExceeded) && !errors.As(err, &panicErr)
 }
 
 func (t *subagentTool) ownerOf(ctx context.Context) string {

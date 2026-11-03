@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -212,6 +213,10 @@ func (c *Controller) Around() tools.Around {
 			reason := fmt.Sprintf("Single-call sandbox escalation %s -> %s; agent=%q session=%q call=%q revision=%d policy_token=%s args_sha256=%x: %s", p.Mode, candidate.Mode, c.config.AgentID, call.SessionID, call.CallID, state.Revision, token, digest, justification)
 			result, e := c.approve(ctx, tools.ApprovalRequest{Call: &approvalCall, Reason: reason})
 			if e != nil {
+				// An approver timeout is a refusal the model can work around; a canceled run still aborts.
+				if errors.Is(e, context.DeadlineExceeded) && ctx.Err() == nil {
+					return denied("escalation approval timed out")
+				}
 				return nil, e
 			}
 			if result.Outcome != tools.ApprovalAllowedOnce && result.Outcome != tools.ApprovalAllowedSession {

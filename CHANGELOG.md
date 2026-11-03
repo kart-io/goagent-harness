@@ -2,6 +2,9 @@
 
 ## 未发布
 
+- 变更：`Configure` 默认开启 GoAgent 的 `WithToolErrorFeedback`，并在组件钩子之后追加 `RetryTransient(3)`。模型调错工具名、参数不是 JSON 或工具执行失败时交还模型纠正；429、5xx 与连接错误按退避重试。需要包含该选项的 GoAgent 版本。
+- 修复：前台子 Agent 失败（如达到 MaxIterations、超时）作为业务拒绝交还父 Agent，不再中止父 Agent；父运行已结束、预算耗尽、等待审批与 panic 仍中止。
+- 修复：单次提权审批超时按拒绝交给模型，不再中止运行；运行本身被取消时仍返回错误。
 - 修复：调用方的超时或取消在探测期间到期时，Docker 后端和固定 `Executor.Runner` 的 native 后端返回 `ErrUnavailable`，现在返回上下文错误，与自动选择后端时一致。
 - 依赖升级到 GoAgent v0.37.0。
 - 新增 `effects`：持久的外部副作用队列，决定与待办原子提交，结果未知时不盲目重做。
