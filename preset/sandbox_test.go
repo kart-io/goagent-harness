@@ -21,11 +21,11 @@ func TestChildCannotWidenNetwork(t *testing.T) {
 	src := trusted(`presets:
   - id: lead
     components:
-      - {id: w, use: workspace, config: {image: alpine:3}}
+      - {id: w, use: workspace, config: {executor: docker, image: alpine:3}}
       - {id: sub, use: subagent, config: {preset: worker}}
   - id: worker
     components:
-      - {id: w, use: workspace, config: {image: alpine:3, network: true}}
+      - {id: w, use: workspace, config: {executor: docker, image: alpine:3, network: true}}
       - {id: tools, use: coding-tools}
 `)
 	_, err := Build(context.Background(), mustGetID(t, "lead", src), Host{Root: t.TempDir(), RunAgent: func(context.Context, *Assembly, string) (string, error) { return "", nil }})
@@ -37,7 +37,7 @@ func TestAdditionalRootsRequireProjectTrust(t *testing.T) {
 	src := Source{Layer: LayerProject, Data: []byte(fmt.Sprintf(`presets:
   - id: p
     components:
-      - {id: w, use: workspace, config: {image: alpine:3, additionalWritableRoots: [%q]}}
+      - {id: w, use: workspace, config: {executor: docker, image: alpine:3, additionalWritableRoots: [%q]}}
 `, extra))}
 	set, err := Load(src)
 	require.NoError(t, err)
@@ -112,7 +112,7 @@ func sandboxPreset(config, names, perms string) Source {
 // A host can narrow a live session and the model must retain a sanctioned way
 // to request one call at the deployment's permitted wider mode.
 func TestSessionNarrowingRetainsEscalationSchema(t *testing.T) {
-	asm, err := Build(context.Background(), mustGet(t, workspacePreset("{image: alpine:3}", "[write_file]")), Host{Root: t.TempDir()})
+	asm, err := Build(context.Background(), mustGet(t, workspacePreset("{executor: docker, image: alpine:3}", "[write_file]")), Host{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = asm.Close() })
 	require.NoError(t, asm.Permissions.SetSession(context.Background(), "session", sandbox.ReadOnly))
@@ -122,13 +122,13 @@ func TestSessionNarrowingRetainsEscalationSchema(t *testing.T) {
 func TestHostCeilingCannotBeApprovedAway(t *testing.T) {
 	root := t.TempDir()
 	ceiling := sandbox.Policy{Mode: sandbox.ReadOnly, WorkspaceRoot: root}
-	_, err := Build(context.Background(), mustGet(t, workspacePreset("{image: alpine:3}", "[]")), Host{Root: root, SandboxCeiling: &ceiling})
+	_, err := Build(context.Background(), mustGet(t, workspacePreset("{executor: docker, image: alpine:3}", "[]")), Host{Root: root, SandboxCeiling: &ceiling})
 	require.ErrorContains(t, err, "hard host ceiling")
 }
 
 func TestNeverApprovalAlsoDeniesSandboxEscalation(t *testing.T) {
 	root := t.TempDir()
-	src := sandboxPreset("{sandbox: read-only, maxSandbox: workspace-write, image: alpine:3}", "[write_file]", "{approval: never, rules: [{tool: write_file, decision: allow}]}")
+	src := sandboxPreset("{executor: docker, sandbox: read-only, maxSandbox: workspace-write, image: alpine:3}", "[write_file]", "{approval: never, rules: [{tool: write_file, decision: allow}]}")
 	asks := 0
 	asm, err := Build(context.Background(), mustGet(t, src), Host{Root: root, Approver: tools.ApproverFunc(func(context.Context, tools.ApprovalRequest) (tools.ApprovalResult, error) {
 		asks++
@@ -145,7 +145,7 @@ func TestNeverApprovalAlsoDeniesSandboxEscalation(t *testing.T) {
 }
 
 func TestRuntimePromptReflectsHostSessionPolicy(t *testing.T) {
-	asm, err := Build(context.Background(), mustGet(t, workspacePreset("{image: alpine:3}", "[write_file]")), Host{Root: t.TempDir(), AgentID: "worker"})
+	asm, err := Build(context.Background(), mustGet(t, workspacePreset("{executor: docker, image: alpine:3}", "[write_file]")), Host{Root: t.TempDir(), AgentID: "worker"})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = asm.Close() })
 	require.NoError(t, asm.Permissions.SetSession(context.Background(), "s", sandbox.ReadOnly))
@@ -164,11 +164,11 @@ func TestChildCannotInheritAdditionalSecretEnvironment(t *testing.T) {
 	src := trusted(`presets:
   - id: lead
     components:
-      - {id: w, use: workspace, config: {image: alpine:3}}
+      - {id: w, use: workspace, config: {executor: docker, image: alpine:3}}
       - {id: sub, use: subagent, config: {preset: worker}}
   - id: worker
     components:
-      - {id: w, use: workspace, config: {image: alpine:3, envAllowlist: [CHILD_SECRET]}}
+      - {id: w, use: workspace, config: {executor: docker, image: alpine:3, envAllowlist: [CHILD_SECRET]}}
       - {id: tools, use: coding-tools}
 `)
 	_, err := Build(context.Background(), mustGetID(t, "lead", src), Host{Root: t.TempDir(), RunAgent: func(context.Context, *Assembly, string) (string, error) { return "", nil }})
@@ -190,7 +190,7 @@ func TestExtraScopeLinterUsesExecutionPath(t *testing.T) {
 }
 
 func TestManifestBindsAgentIdentityButNotSessionRevision(t *testing.T) {
-	p := mustGet(t, workspacePreset("{image: alpine:3}", "[write_file]"))
+	p := mustGet(t, workspacePreset("{executor: docker, image: alpine:3}", "[write_file]"))
 	host := Host{Root: t.TempDir(), AgentID: "first-worker"}
 	first, err := Build(context.Background(), p, host)
 	require.NoError(t, err)
@@ -221,4 +221,19 @@ func TestNativeFallbackRecordedInContract(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = asm.Close() })
 	require.Contains(t, asm.Manifest.Workspace.Contract, ";runner="+sandbox.RunnerLandlock)
+}
+
+// workspace 缺省使用 native；只写 image 的旧配置报错并提示改写 executor: docker。
+func TestWorkspaceDefaultsToNative(t *testing.T) {
+	p := mustGet(t, workspacePreset("{}", "[]"))
+	var cfg *WorkspaceConfig
+	for _, row := range p.Rows {
+		if c, ok := row.config.(*WorkspaceConfig); ok {
+			cfg = c
+		}
+	}
+	require.NotNil(t, cfg)
+	require.Equal(t, "native", cfg.Executor)
+	_, err := Load(workspacePreset("{image: alpine:3}", "[]"))
+	require.ErrorContains(t, err, "executor: docker")
 }

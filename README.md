@@ -51,7 +51,7 @@ output, err := agent.AsRunnable().Invoke(ctx, "完成任务")
 ## 沙盒与 Agent 权限
 
 沙盒采用 DSH 的策略与执行分层：文件模式、目录范围、网络策略独立表达；工具规则与人的审批不能越过宿主上限。
-默认仍使用 Docker，并保持 `network: false`。选择 `executor: native` 可使用 macOS Seatbelt 或 Linux Bubblewrap。
+默认使用 `executor: native`（macOS Seatbelt，Linux 上 Bubblewrap 或 Landlock），保持 `network: false`；在容器中执行请写 `executor: docker` 并指定 `image`。
 后端不可用或不能兑现策略时拒绝执行，不自动回退到无限制的本机执行。
 
 ```yaml

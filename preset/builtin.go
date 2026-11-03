@@ -105,7 +105,7 @@ type WorkspaceConfig struct {
 	AdditionalWritableRoots []string `yaml:"additionalWritableRoots"`
 	// EnvAllowlist permits named host environment variables in command subprocesses.
 	EnvAllowlist []string `yaml:"envAllowlist"`
-	// Executor 为 docker（默认）、native 或不隔离的 local。
+	// Executor 为 native（默认，macOS Seatbelt、Linux bubblewrap 或 Landlock）、docker 或不隔离的 local。
 	Executor string `yaml:"executor"`
 	// Provider is a trusted Host.Sandboxes key, only for executor=sandbox.
 	Provider string `yaml:"provider" json:",omitempty"`
@@ -151,7 +151,7 @@ var workspaceSpec = Spec[WorkspaceConfig]{
 			}
 		}
 		if c.Executor == "" {
-			c.Executor = "docker"
+			c.Executor = "native"
 		}
 		switch c.Executor {
 		case "docker":
@@ -166,7 +166,7 @@ var workspaceSpec = Spec[WorkspaceConfig]{
 				return errors.New("local/native 不使用 provider")
 			}
 			if c.Image != "" {
-				return errors.New("local 执行器不使用 image")
+				return fmt.Errorf("%s 执行器不使用 image；在容器中执行请写 executor: docker", c.Executor)
 			}
 		case "sandbox":
 			if strings.TrimSpace(c.Provider) == "" || strings.ContainsAny(c.Provider, "/: \t\n") || c.Image == "" {

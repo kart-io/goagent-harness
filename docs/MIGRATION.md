@@ -28,7 +28,7 @@ Builder、Runnable、Graph、durable、budget、observe、Dispatcher/Pipeline、
 
 ## DSH 风格沙盒与权限迁移
 
-原有 YAML 的默认值保持：`executor: docker`、`sandbox: workspace-write`、`network: false`。
+默认值：`executor: native`、`sandbox: workspace-write`、`network: false`。早期版本缺省为 `executor: docker`，依赖该缺省的配置需显式写 `executor: docker`。
 `executor: local` 仍表示不隔离；只读 local 仍隐藏命令工具，不会自动切到 native。
 原有 GoAgent env 接口与依赖版本不变。
 
