@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -78,11 +81,64 @@ const compactionPrompt = "你负责压缩 Agent 的对话历史。把用户给�
 	"保留用户的目标与要求、已经做出的决定、已完成与未完成的工作、关键事实（文件路径、命令、错误信息、数值）以及尚未解决的问题；" +
 	"省略寒暄与重复内容。只输出摘要。"
 
+// 对话记录放在标记之间，之后重申要求：记录以未完成的工具调用结尾时，摘要模型容易顺着续写，编造没有发生的调用与结果。
+const (
+	transcriptOpen  = "<对话记录>\n"
+	transcriptClose = "</对话记录>\n\n以上是需要压缩的对话记录，到此为止。不要续写对话，不要编造记录中没有的工具调用、结果或结论；" +
+		"记录在进行中的工作处结束时，就写明它尚未完成。只输出摘要。"
+)
+
 // summaryPrefix 标记摘要消息，planPrefix 标记保留的获批计划；再次压缩时据此识别。
 const (
 	summaryPrefix = "[此前对话的摘要]\n"
 	planPrefix    = "[已获批的计划]\n"
 )
+
+// todoHeader 引出附在摘要后的待办；旧摘要交给摘要模型前去掉这一段，免得过时的待办被抄进新摘要。
+const todoHeader = "\n\n当前待办："
+
+// thrashNote 在连续几次压缩之间都没有修改文件或提交时附在摘要后。常见两种循环：要同时看的文件放不进上下文，
+// 读进来就被压缩掉再读；反复调试，输出随即被压缩，结论留不下来。压缩删掉了历史，loop-detect 看不到这些重复。
+// 次数从旧摘要中解析，持久运行恢复时结果一致。
+const thrashNote = "\n\n注意：上下文空间有限，连续 %d 次压缩之间没有修改文件或提交，读到的内容和调试输出随即被压缩掉。" +
+	"不要一次读入多个文件，也不要反复调试同一处；根据摘要中已有的结论直接修改，或换一种思路；需要保留的发现先用 todo_write 记下。"
+
+var thrashCount = regexp.MustCompile(`连续 (\d+) 次压缩之间没有修改文件或提交`)
+
+// progressTools 推进任务：两次压缩之间调用过其中之一，stalledStreak 就清零。run_command 也可能改文件，
+// 但多用于运行测试与调试，不计入。
+var progressTools = []string{coding.ToolWriteFile, coding.ToolEditFile, coding.ToolMultiEdit, coding.ToolGitCommit}
+
+// stalledStreak 返回区间所代表的连续停滞压缩次数：区间里有旧摘要、旧摘要之后有工具调用但都不推进任务时，
+// 在旧摘要记下的次数上加一；否则为 0。
+func stalledStreak(span []llm.Message) int {
+	last := -1
+	for i, m := range span {
+		if m.Role == "user" && strings.HasPrefix(m.Content, summaryPrefix) {
+			last = i
+		}
+	}
+	if last < 0 {
+		return 0
+	}
+	calls := 0
+	for _, m := range span[last+1:] {
+		for _, tc := range m.ToolCalls {
+			if slices.Contains(progressTools, tc.Function.Name) {
+				return 0
+			}
+			calls++
+		}
+	}
+	if calls == 0 {
+		return 0
+	}
+	prev := 1
+	if m := thrashCount.FindStringSubmatch(span[last].Content); m != nil {
+		prev, _ = strconv.Atoi(m[1])
+	}
+	return prev + 1
+}
 
 // summaryOutputTokens 是预留预算时为摘要输出估计的 token 数。
 const summaryOutputTokens = 2048
@@ -169,9 +225,12 @@ func (cp *compactor) compactKeeping(ctx context.Context, messages []llm.Message,
 		}
 		summary = fallbackSummary(span, err)
 	}
+	if n := stalledStreak(span); n >= 2 {
+		summary += fmt.Sprintf(thrashNote, n)
+	}
 	if cp.todos != nil {
 		if todos := cp.todos(); len(todos) > 0 {
-			summary += "\n\n当前待办："
+			summary += todoHeader
 			for _, t := range todos {
 				summary += fmt.Sprintf("\n- [%s] %s", t.Status, t.Content)
 			}
@@ -183,12 +242,18 @@ func (cp *compactor) compactKeeping(ctx context.Context, messages []llm.Message,
 	return append(out, messages[cut:]...), true, nil
 }
 
-// summarize 请求摘要模型；绑定了根预算时先预留再登记用量，与 Agent 的模型请求共用额度。
+// summarize 请求摘要模型。要求摘要不超过 keepTokens/2：不设上限的摘要会随多次压缩变长，压缩后的历史贴近 maxTokens，
+// 每读一个文件就再压缩一次。模型未必遵守；实测再请求一次缩写只缩短一成左右，不值得多一次请求。
 func (cp *compactor) summarize(ctx context.Context, span []llm.Message) (string, error) {
-	msgs := []llm.Message{
+	return cp.chat(ctx, []llm.Message{
 		llm.SystemMessage(strings.TrimSpace(compactionPrompt + "\n" + cp.cfg.Instructions)),
-		llm.UserMessage(renderTranscript(span)),
-	}
+		// 要求放在记录之后，模型更会遵守。
+		llm.UserMessage(transcriptOpen + renderTranscript(span) + transcriptClose + fmt.Sprintf("摘要不超过 %d 字，篇幅紧张时只留仍影响后续工作的信息。", cp.cfg.KeepTokens/2)),
+	})
+}
+
+// chat 请求一次摘要模型；绑定了根预算时先预留再登记用量，与 Agent 的模型请求共用额度。
+func (cp *compactor) chat(ctx context.Context, msgs []llm.Message) (string, error) {
 	c, metered := budget.FromContext(ctx)
 	// 每次请求用新键：同一键不能重复预留，持久运行恢复时重新压缩会再占一份额度。
 	key := "compaction/" + uuid.NewString()
@@ -219,11 +284,14 @@ func (cp *compactor) summarize(ctx context.Context, span []llm.Message) (string,
 	return summary, nil
 }
 
-// fallbackSummary 在摘要失败时说明省略了什么，模型据此知道需要时重新查看。
+// fallbackSummary 在摘要失败时说明省略了什么，模型据此知道需要时重新查看；区间里的旧摘要原样接在后面，不因一次失败丢失。
 func fallbackSummary(span []llm.Message, cause error) string {
-	var names []string
+	var names, earlier []string
 	counts := map[string]int{}
 	for _, m := range span {
+		if m.Role == "user" && strings.HasPrefix(m.Content, summaryPrefix) {
+			earlier = append(earlier, summaryBody(m.Content))
+		}
 		for _, tc := range m.ToolCalls {
 			if counts[tc.Function.Name] == 0 {
 				names = append(names, tc.Function.Name)
@@ -238,6 +306,9 @@ func fallbackSummary(span []llm.Message, cause error) string {
 			parts[i] = fmt.Sprintf("%s %d 次", n, counts[n])
 		}
 		text += "其中调用过的工具：" + strings.Join(parts, "、") + "。需要其中的信息时请重新查看。"
+	}
+	for _, e := range earlier {
+		text += "\n\n更早的摘要：\n" + e
 	}
 	return text
 }
@@ -308,7 +379,9 @@ func renderTranscript(messages []llm.Message) string {
 	for _, m := range messages {
 		content := m.Content
 		// 旧摘要不截断，否则多次压缩逐级失真。
-		if !strings.HasPrefix(content, summaryPrefix) {
+		if strings.HasPrefix(content, summaryPrefix) {
+			content = summaryPrefix + summaryBody(content)
+		} else {
 			content = truncateRunes(content, maxRenderedRunes)
 		}
 		fmt.Fprintf(&sb, "[%s]\n%s\n", m.Role, content)
@@ -318,6 +391,20 @@ func renderTranscript(messages []llm.Message) string {
 		sb.WriteString("\n")
 	}
 	return sb.String()
+}
+
+// summaryBody 去掉摘要消息的前缀，以及附带的空转提示与待办。
+func summaryBody(content string) string {
+	content = strings.TrimPrefix(content, summaryPrefix)
+	if i := strings.LastIndex(content, todoHeader); i >= 0 {
+		content = content[:i]
+	}
+	if loc := thrashCount.FindStringIndex(content); loc != nil {
+		if i := strings.LastIndex(content[:loc[0]], "\n\n注意："); i >= 0 {
+			content = content[:i]
+		}
+	}
+	return content
 }
 
 func truncateRunes(s string, n int) string {

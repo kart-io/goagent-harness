@@ -22,8 +22,8 @@ type chatModel struct {
 
 func (m *chatModel) Chat(ctx context.Context, msgs []llm.Message) (*llm.CompletionResponse, error) {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.chats = append(m.chats, msgs)
-	m.mu.Unlock()
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -60,10 +60,8 @@ func TestCompactionKeepsUserMessages(t *testing.T) {
 	out, changed, err := newCompactor(&chatModel{}).compact(context.Background(), msgs, 1)
 	require.NoError(t, err)
 	require.True(t, changed)
-	require.Equal(t, []llm.Message{
-		msgs[0], llm.UserMessage(summaryPrefix + "摘要"),
-		llm.UserMessage("任务：修复 Sum"), llm.UserMessage("还要补测试"),
-	}, out[:4])
+	require.True(t, strings.HasPrefix(out[1].Content, summaryPrefix+"摘要"))
+	require.Equal(t, []llm.Message{llm.UserMessage("任务：修复 Sum"), llm.UserMessage("还要补测试")}, out[2:4])
 }
 
 // 获批的计划原样保留，再次压缩时继续保留；未获批的提交不算。
@@ -82,7 +80,10 @@ func TestCompactionKeepsApprovedPlan(t *testing.T) {
 	again, _, err := cp.compact(context.Background(), compactable(out[1:3]...), 1)
 	require.NoError(t, err)
 	require.Equal(t, llm.UserMessage(planPrefix+"旧计划"), again[2])
-	require.Contains(t, cp.model.(*chatModel).chats[1][1].Content, summaryPrefix+"摘要", "an earlier summary is rendered in full")
+	rendered := cp.model.(*chatModel).chats[1][1].Content
+	require.Contains(t, rendered, summaryPrefix+"摘要", "an earlier summary is rendered in full")
+	require.Contains(t, cp.model.(*chatModel).chats[1][1].Content, transcriptClose+"摘要不超过 20 字", "the length limit follows the transcript")
+	require.True(t, strings.HasPrefix(rendered, transcriptOpen) && strings.Contains(rendered, transcriptClose), "the transcript is delimited and followed by the instruction")
 }
 
 func TestCompactionAppendsTodos(t *testing.T) {
@@ -93,6 +94,13 @@ func TestCompactionAppendsTodos(t *testing.T) {
 	out, _, err := cp.compact(context.Background(), compactable(llm.UserMessage("任务")), 1)
 	require.NoError(t, err)
 	require.Equal(t, summaryPrefix+"摘要\n\n当前待办：\n- [completed] 定位 bug\n- [pending] 补测试", out[1].Content)
+
+	// 再次压缩时，旧摘要附的待办不交给摘要模型。
+	_, _, err = cp.compact(context.Background(), compactable(out[1:3]...), 1)
+	require.NoError(t, err)
+	rendered := cp.model.(*chatModel).chats[1][1].Content
+	require.Contains(t, rendered, summaryPrefix+"摘要")
+	require.NotContains(t, rendered, "定位 bug")
 }
 
 // 摘要失败时退化为说明并继续；取消与预算耗尽仍中止。
@@ -103,6 +111,13 @@ func TestCompactionFallsBackOnSummaryFailure(t *testing.T) {
 	require.True(t, changed)
 	require.Contains(t, out[1].Content, "摘要生成失败（503）")
 	require.Equal(t, llm.UserMessage("任务"), out[2])
+
+	// 区间里的旧摘要不因摘要失败丢失。
+	withSummary := compactable(llm.UserMessage(summaryPrefix+"已定位 bug"+todoHeader+"\n- [pending] 过时"), llm.UserMessage("任务"))
+	out, _, err = newCompactor(&chatModel{err: errors.New("503")}).compact(context.Background(), withSummary, 1)
+	require.NoError(t, err)
+	require.Contains(t, out[1].Content, "更早的摘要：\n已定位 bug")
+	require.NotContains(t, out[1].Content, "过时")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -148,4 +163,29 @@ func TestCompactionSkipsSummaryOnlySpan(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.Len(t, model.chats, 1)
+}
+
+// 连续几次压缩之间没有修改文件或提交时附上提示，次数从旧摘要中累加；有修改时清零。run_command 不算推进。
+func TestCompactionNotesReadOnlyThrash(t *testing.T) {
+	cp := newCompactor(&chatModel{})
+	reads := func(prev string) []llm.Message {
+		return compactable(llm.UserMessage(prev), llm.UserMessage("任务"),
+			llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{toolCall("g", coding.ToolGlob, `{}`), toolCall("r2", coding.ToolRunCommand, `{}`)}},
+			llm.Message{Role: "tool", ToolCallID: "g", Content: "a.go"}, llm.Message{Role: "tool", ToolCallID: "r2", Content: "FAIL"})
+	}
+	out, _, err := cp.compact(context.Background(), reads(summaryPrefix+"旧"), 1)
+	require.NoError(t, err)
+	require.Contains(t, out[1].Content, "连续 2 次压缩之间没有修改文件或提交")
+
+	out, _, err = cp.compact(context.Background(), reads(out[1].Content), 1)
+	require.NoError(t, err)
+	require.Contains(t, out[1].Content, "连续 3 次压缩之间没有修改文件或提交")
+	require.NotContains(t, cp.model.(*chatModel).chats[1][1].Content, "注意：上下文空间有限", "the note is not fed back to the summarizer")
+
+	edited := compactable(llm.UserMessage(out[1].Content), llm.UserMessage("任务"),
+		llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{toolCall("e", coding.ToolEditFile, `{}`)}},
+		llm.Message{Role: "tool", ToolCallID: "e", Content: "ok"})
+	out, _, err = cp.compact(context.Background(), edited, 1)
+	require.NoError(t, err)
+	require.NotContains(t, out[1].Content, "注意：上下文空间有限", "progress resets the streak")
 }
