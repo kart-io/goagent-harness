@@ -200,13 +200,8 @@ func TestNativePrivateTempAndNull(t *testing.T) {
 	}
 }
 func TestDockerKeepsImagePath(t *testing.T) {
-	bin := t.TempDir()
-	capture := filepath.Join(bin, "capture")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" >> " + shellQuote(capture) + "\nif [ \"$1\" != run ]; then exit 0; fi\nwhile [ \"$1\" != test ]; do shift; done\nshift\nexec \"$@\"\n"
-	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+	capture := filepath.Join(t.TempDir(), "capture")
+	fakeDockerCLI(t, "test", "", capture)
 	e := Executor{Backend: "docker", Image: "test", Policy: Policy{WorkspaceRoot: t.TempDir(), Mode: WorkspaceWrite, Network: NetworkDeny}}
 	if _, err := e.raw(context.Background(), e.Policy, env.Command{Argv: []string{"true"}}); err != nil {
 		t.Fatal(err)
@@ -328,10 +323,32 @@ func TestDockerReal(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal(err)
 	}
-	out, err := exec.Command("docker", "ps", "-aq", "--filter", "name=harness-sandbox-", "--filter", "volume="+root).Output()
-	if err != nil || strings.TrimSpace(string(out)) != "" {
-		t.Fatalf("container leftovers %s %v", out, err)
+	waitNoContainers(t, "name=harness-sandbox-", "volume="+root)
+	// 超时可能落在探测、创建或运行期间。守护进程会在客户端退出后才建好容器，所以稍等再按本进程的名字前缀检查。
+	for _, timeout := range []time.Duration{300 * time.Millisecond, 1500 * time.Millisecond, 4 * time.Second, 8 * time.Second} {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		_, _ = e.Run(ctx, env.Command{Argv: []string{"sleep", "30"}})
+		cancel()
 	}
+	time.Sleep(5 * time.Second)
+	waitNoContainers(t, fmt.Sprintf("name=harness-sandbox-%d-", os.Getpid()))
+}
+
+// waitNoContainers 等匹配的容器删完。负载高时 docker rm -f 会在守护进程删除完成前返回（removal already in progress）。
+func waitNoContainers(t *testing.T, filters ...string) {
+	t.Helper()
+	args := []string{"ps", "-aq"}
+	for _, f := range filters {
+		args = append(args, "--filter", f)
+	}
+	var out []byte
+	var err error
+	for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
+		if out, err = exec.Command("docker", args...).Output(); err == nil && strings.TrimSpace(string(out)) == "" {
+			return
+		}
+	}
+	t.Fatalf("container leftovers %s %v", out, err)
 }
 
 func TestDockerUnixSocketReal(t *testing.T) {

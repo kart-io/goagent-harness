@@ -9,8 +9,10 @@
 - 新增 `loop-detect` 组件：相同参数与相同结果的工具调用重复，或同一文件反复编辑时提醒模型重新考虑做法，可选在重复过多时结束本轮。
 - 新增 `verify-before-stop`：模型给出最终答复前在工作区运行检查命令，失败时把输出交还模型续跑，默认最多 3 次。本会话还没有经写入类工具改动文件时不检查。`coding.Workspace` 增加 `RunCheck`。
 - `claude-code-hooks` 的 `Stop`：`stop_hook_active` 只在本轮已因 Stop 钩子续跑时为 true，用户 Steer 不再使它为 true。需要 GoAgent 的 `Stopping.Blocked`。
+- 修复：SSH 实例销毁时如果按键命令刚启动、监管进程还没记下它的 pid，这条命令会漏掉并继续运行。现在先等 pid 写好（最多 3 秒）再结束监管进程。
+- 修复：Docker 后端的命令超时或取消落在容器创建期间时会留下 `created` 状态的容器。现在先创建再启动，创建不随 ctx 取消（上限 1 分钟），镜像不在本地时先拉取。
 - 修复：调用方的超时或取消在探测期间到期时，Docker 后端和固定 `Executor.Runner` 的 native 后端返回 `ErrUnavailable`，现在返回上下文错误，与自动选择后端时一致。
-- 依赖升级到 GoAgent v0.39.0。
+- 依赖升级到 GoAgent v0.39.0，其中包含 v0.38.1 对 `env.DockerExecutor` 容器泄漏的修复。
 - 新增 `effects`：持久的外部副作用队列，决定与待办原子提交，结果未知时不盲目重做。
 - 新增 `background`：有稳定身份的子工作，重启后找回，完成后通知所有者，提供等待上限、交接和为人保留的槽位。
 - `subagent` 组件增加 `mode: background`，由 `Host.Background` 持有子 Agent。默认仍是同步的前台模式。

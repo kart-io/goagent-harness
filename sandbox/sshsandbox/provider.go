@@ -218,10 +218,15 @@ func (p *Provider) FindByScope(ctx context.Context, r sandbox.Request) (string, 
 }
 
 // 先杀监管进程，它不会再启动新的命令。再让 sandbox-runner 结束命令：Landlock 没有 PID 命名空间，直接强杀它会漏掉命令的进程组。
+// 监管进程启动命令之后才写 pid，所以先等 pid 出现再杀它，否则刚启动的命令不会被记录，也就不会被结束。
 const destroyScript = `d=$1
 [ -d "$d" ] || exit 0
 for f in "$d"/state/*/supervisor; do
-	[ -f "$f" ] && kill -KILL -"$(cat "$f")" 2>/dev/null
+	[ -f "$f" ] || continue
+	k=${f%/supervisor}
+	i=0
+	while [ ! -f "$k/pid" ] && [ ! -f "$k/exit" ] && [ "$i" -lt 30 ]; do sleep 0.1; i=$((i+1)); done
+	kill -KILL -"$(cat "$f")" 2>/dev/null
 done
 running=
 for f in "$d"/state/*/pid; do

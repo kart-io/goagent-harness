@@ -282,7 +282,6 @@ func (e *Executor) runOnce(ctx context.Context, p Policy, c env.Command) (env.Re
 		}
 	}
 	dir := filepath.Join(p.WorkspaceRoot, c.Dir)
-	var cleanup func()
 	var seccomp *os.File
 	landlock := false
 	commandEnv := e.environment()
@@ -373,7 +372,7 @@ func (e *Executor) runOnce(ctx context.Context, p Policy, c env.Command) (env.Re
 			return env.Result{}, profileErr
 		}
 		defer removeProfile()
-		args := []string{"docker", "run", "--rm", "--security-opt", "seccomp=" + profilePath, "--name", name, "--network"}
+		args := []string{"--rm", "--security-opt", "seccomp=" + profilePath, "--name", name, "--network"}
 		if p.Network == NetworkDeny {
 			args = append(args, "none")
 		} else {
@@ -397,17 +396,20 @@ func (e *Executor) runOnce(ctx context.Context, p Policy, c env.Command) (env.Re
 		for _, v := range e.containerEnvironment() {
 			args = append(args, "-e", v)
 		}
-		argv = append(append(args, e.Image), argv...)
-		cleanup = func() {
+		defer func() {
 			c, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			_ = exec.CommandContext(c, "docker", "rm", "-f", name).Run()
+		}()
+		if out, err := createDockerContainer(ctx, e.Image, append(append(args, e.Image), argv...)); err != nil {
+			if ctx.Err() != nil {
+				return env.Result{}, ctx.Err()
+			}
+			return env.Result{Output: out}, fmt.Errorf("%w: docker runner did not start command: create: %v: %s", ErrUnavailable, err, out)
 		}
+		argv = []string{"docker", "start", "-a", name}
 	default:
 		return env.Result{}, ErrUnavailable
-	}
-	if cleanup != nil {
-		defer cleanup()
 	}
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	if seccomp != nil {
@@ -450,6 +452,34 @@ func (e *Executor) runOnce(ctx context.Context, p Policy, c env.Command) (env.Re
 		return res, nil
 	}
 	return res, err
+}
+
+// dockerCreateTimeout 限制不随 ctx 取消的 docker create。镜像已在本地，创建通常一两秒内完成。
+const dockerCreateTimeout = time.Minute
+
+// createDockerContainer 创建容器但不启动。docker run 被中断时守护进程可能仍在创建容器，之后的 rm 删不到它，
+// 所以创建不随 ctx 取消，等容器确实存在后再删除。镜像不在本地时先拉取，拉取可以随 ctx 取消。
+func createDockerContainer(ctx context.Context, image string, args []string) ([]byte, error) {
+	for pulled := false; ; pulled = true {
+		createCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), dockerCreateTimeout)
+		create := exec.CommandContext(createCtx, "docker", append([]string{"create", "--pull", "never"}, args...)...)
+		create.WaitDelay = time.Second
+		out, err := create.CombinedOutput()
+		cancel()
+		if err == nil || ctx.Err() != nil || pulled {
+			return out, err
+		}
+		inspect := exec.CommandContext(ctx, "docker", "image", "inspect", image)
+		inspect.WaitDelay = time.Second
+		if inspect.Run() == nil {
+			return out, err
+		}
+		pull := exec.CommandContext(ctx, "docker", "pull", "-q", image)
+		pull.WaitDelay = time.Second
+		if pullOut, pullErr := pull.CombinedOutput(); pullErr != nil {
+			return append(out, pullOut...), pullErr
+		}
+	}
 }
 
 type boundedBuffer struct {
