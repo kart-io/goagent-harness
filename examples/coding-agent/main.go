@@ -46,7 +46,8 @@ func main() {
 func hostLayer() (preset.Source, error) {
 	// 编辑 Go 文件后运行 gofmt 检查，格式不对的编辑被撤销并把输出交给模型。
 	linter := map[string]any{"ext": ".go", "command": []string{"sh", "-c", `out=$(gofmt -l "$0") && [ -z "$out" ] || { gofmt -d "$0"; exit 1; }`}}
-	workspace := map[string]any{"sandbox": "danger-full-access", "executor": "local", "network": true, "commandTimeout": "2m", "linters": []any{linter}}
+	// 命令只继承 PATH 等少数环境变量；没有 HOME 时 go 找不到构建缓存目录，go test 直接失败。
+	workspace := map[string]any{"sandbox": "danger-full-access", "executor": "local", "network": true, "envAllowlist": []string{"HOME"}, "commandTimeout": "2m", "linters": []any{linter}}
 	if image := os.Getenv("CODING_DOCKER_IMAGE"); image != "" {
 		workspace = map[string]any{"sandbox": "workspace-write", "executor": "docker", "image": image, "commandTimeout": "2m", "linters": []any{linter}}
 	}
