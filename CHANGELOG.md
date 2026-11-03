@@ -7,6 +7,8 @@
 - 修复：单次提权审批超时按拒绝交给模型，不再中止运行；运行本身被取消时仍返回错误。
 - 新增 `env-context` 组件：装配时在工作区执行器内探测系统、git 状态与工具链版本，连同根目录列表拼进系统提示词，模型不必先花几步探索环境。`coding.Workspace.Environment` 提供同样的快照。
 - 新增 `loop-detect` 组件：相同参数与相同结果的工具调用重复，或同一文件反复编辑时提醒模型重新考虑做法，可选在重复过多时结束本轮。
+- 新增 `verify-before-stop`：模型给出最终答复前在工作区运行检查命令，失败时把输出交还模型续跑，默认最多 3 次。本会话还没有经写入类工具改动文件时不检查。`coding.Workspace` 增加 `RunCheck`。
+- `claude-code-hooks` 的 `Stop`：`stop_hook_active` 只在本轮已因 Stop 钩子续跑时为 true，用户 Steer 不再使它为 true。需要 GoAgent 的 `Stopping.Blocked`。
 - 修复：调用方的超时或取消在探测期间到期时，Docker 后端和固定 `Executor.Runner` 的 native 后端返回 `ErrUnavailable`，现在返回上下文错误，与自动选择后端时一致。
 - 依赖升级到 GoAgent v0.37.0。
 - 新增 `effects`：持久的外部副作用队列，决定与待办原子提交，结果未知时不盲目重做。

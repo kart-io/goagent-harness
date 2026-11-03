@@ -44,7 +44,7 @@ var hookEvents = []string{hookPreToolUse, hookPostToolUse, hookUserPromptSubmit,
 // 各事件的作用：
 //   - UserPromptSubmit：本步新收到的每条用户输入（轮次输入、Steer 等）各执行一次；阻止时去掉该输入，
 //     轮次输入被阻止则以原因作为答复结束本轮；stdout 或 additionalContext 追加到该输入之后。
-//   - Stop：模型给出最终答复时执行；阻止时把原因作为 user 消息续跑，stop_hook_active 表示本轮已续跑过。
+//   - Stop：模型给出最终答复时执行；阻止时把原因作为 user 消息续跑，stop_hook_active 表示本轮已因 Stop 钩子续跑过（不含 Steer）。
 //   - SessionStart：每个会话第一次运行时执行一次（source 为 startup），输出进入 system 提示词。
 //   - transcript_path 总为空串：会话不写成文件。
 type ClaudeCodeHooksConfig struct {
@@ -516,7 +516,7 @@ func (r *hookRunner) promptSubmit(ctx context.Context, step *builder.Step) (buil
 
 func (r *hookRunner) stop(ctx context.Context, s *builder.Stopping) (string, error) {
 	payload := r.payload(hookStop, tools.SessionIDFrom(ctx))
-	payload["stop_hook_active"], payload["last_assistant_message"] = s.Continued > 0, s.Answer
+	payload["stop_hook_active"], payload["last_assistant_message"] = s.Blocked > 0, s.Answer
 	blocks, _, err := r.outcome(ctx, r.selected(hookStop), payload)
 	if err != nil || len(blocks) == 0 {
 		return "", err

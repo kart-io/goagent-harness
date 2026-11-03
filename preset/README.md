@@ -87,6 +87,7 @@ presets:
 | `plan-mode` | `initial`（默认 true）、`allow`（缺省为只读工具） | 单例。计划模式，见下文 |
 | `compaction` | `maxTokens`（默认 100000）、`keepTokens`（默认 maxTokens/4）、`instructions` | 单例。对话压缩，需要 `Host.CompactionModel`，见下文 |
 | `loop-detect` | `window`（默认 30）、`repeats`（默认 3）、`fileEdits`（默认 8）、`editTools`（默认 write_file、edit_file、multi_edit）、`haltRepeats`（默认 0 不结束） | 单例。最近的工具调用中相同参数与相同结果重复，或同一文件反复编辑时，在工具结果后追加提醒，要求模型换一种做法；`haltRepeats` 达到时结束本轮并说明原因。只依据消息历史，持久运行恢复时结果一致 |
+| `verify-before-stop` | `command`（必填）、`maxAttempts`（默认 3） | 单例，需要 `workspace`。模型给出最终答复前在工作区运行检查命令，失败时把输出交还模型续跑；本会话还没有经写入类工具改动文件时不检查 |
 
 | 沙箱模式 | 文件工具 | 命令（含 git、lint） |
 |---|---|---|
@@ -158,7 +159,7 @@ Git 读取工具也可通过仓库配置或辅助程序执行子进程，所以�
 - 调用前：退出码 2 阻止调用、stderr 作为原因交给模型；stdout 的 `hookSpecificOutput.permissionDecision`（allow/ask/deny）或 `decision`（approve/block）给出裁决。多个钩子按 deny > ask > allow 合并，并与权限规则一起聚合：钩子的 allow 不越过规则的 ask。
 - 调用后：退出码 2、`decision: block` 的原因与 `additionalContext` 作为附加上下文交给模型（工具已经执行）。
 - `UserPromptSubmit`（stdin 另有 `prompt`）：本步新收到的每条用户输入各执行一次，包括轮次输入与运行中 Steer、Inject、Redirect 的输入。退出码 2 或 `decision: block` 去掉该输入；轮次输入被阻止时不请求模型，以原因作为答复结束本轮。stdout 纯文本或 `additionalContext` 追加在该输入之后。
-- `Stop`（stdin 另有 `stop_hook_active`、`last_assistant_message`）：模型给出最终答复时执行；退出码 2 或 `decision: block` 把原因作为 user 消息续跑。本轮已续跑过时 `stop_hook_active` 为 true，钩子应据此避免无限续跑；续跑也受 `MaxIterations` 限制。
+- `Stop`（stdin 另有 `stop_hook_active`、`last_assistant_message`）：模型给出最终答复时执行；退出码 2 或 `decision: block` 把原因作为 user 消息续跑。本轮已因 Stop 钩子续跑过时 `stop_hook_active` 为 true（用户 Steer 不算），钩子应据此避免无限续跑。续跑后至少还要剩一步带工具的请求，否则不执行 Stop 钩子，答复的元数据记 `turn_stopping_skipped`。
 - `SessionStart`（stdin 另有 `source: startup`，`matcher` 匹配 source）：每个会话第一次运行时执行一次，stdout 纯文本或 `additionalContext` 进入 system 提示词，同一会话之后的轮次沿用。
 - 其他非零退出码、无法启动与超时不阻止。`UserPromptSubmit`、`Stop`、`SessionStart` 经循环扩展点实现，只在原生工具流中生效（`llm.ToolStreamClient` 且配置了工具）。
 - 编码工具在钩子中以 Claude Code 的名称出现（`run_command` → `Bash`、`read_file` → `Read`、`write_file` → `Write`、`edit_file` → `Edit` 等），文件类工具的参数另带 `file_path`；`matcher` 按完整匹配的正则同时匹配两种名称。
