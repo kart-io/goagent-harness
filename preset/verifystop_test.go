@@ -42,6 +42,21 @@ func TestVerifyBeforeStopContinuesUntilCheckPasses(t *testing.T) {
 	require.Len(t, model.requests, 4)
 }
 
+// 改动过的文件按路径排序作为位置参数传给检查命令。
+func TestVerifyBeforeStopPassesChangedFiles(t *testing.T) {
+	asm, err := Build(context.Background(), mustGet(t, verifyPreset(`{command: 'echo "changed:$*"; exit 1', maxAttempts: 1}`)), Host{Root: t.TempDir(), ArtifactDir: t.TempDir()})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, asm.Close()) }()
+
+	model := &scriptModel{turns: []scriptTurn{
+		call("c1", "write_file", `{"path":"pkg/b.go","content":"x"}`), call("c2", "write_file", `{"path":"a.go","content":"x"}`),
+		say("完成"), say("结束"),
+	}}
+	_, err = run(t, asm, model, "s", "改代码")
+	require.NoError(t, err)
+	require.Contains(t, verifyFeedback(model.request(3)), "changed:a.go pkg/b.go")
+}
+
 // 没有经写入类工具改动文件时不检查；续跑达到 maxAttempts 后按模型的答复结束。
 func TestVerifyBeforeStopSkipsAndCaps(t *testing.T) {
 	asm, err := Build(context.Background(), mustGet(t, verifyPreset(`{command: 'exit 1', maxAttempts: 1}`)), Host{Root: t.TempDir(), ArtifactDir: t.TempDir()})

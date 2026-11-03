@@ -2,6 +2,7 @@
 
 ## 未发布
 
+- `verify-before-stop`：改动过的文件按路径排序作为位置参数传给检查命令，命令可用 `"$@"` 只测试相关的包，不必在编译与全量测试之间二选一。验证失败的反馈提示模型：与本次改动无关的失败（如改动前就失败的测试）说明即可，不要修改无关代码。`coding.Workspace.RunCheck` 增加可选的位置参数。
 - 新增 `eval/swebench`：在 SWE-bench Multilingual 的 Go 子集（42 题，caddy、gin、prometheus、hugo、terraform）上评测编码 Agent。Agent 在 native 沙箱中解题，Go 版本按官方镜像设置 `GOTOOLCHAIN`；补丁由官方镜像和官方评测脚本判定，先用官方补丁校验每题的评测环境。镜像在后台预拉，中断后重跑跳过已完成的部分（因模型服务出错而中止的 Agent 运行除外），每次模型请求的耗时写入 `requests.log`。模型请求最多重试 20 次，已输出部分内容再断流的请求也会重发。`-model` 选择 `deepseek`（deepseek-chat，默认）或 `minimax`（MiniMax-M3，经 OpenAI 兼容接口）；MiniMax 的思考计入输出 token，每次请求的输出上限设为 32000，Builder 默认的 2000 常在调用工具前就被耗尽。
 - 变更：`workspace` 的 `executor` 缺省值由 `docker` 改为 `native`。本机沙箱每条命令只需毫秒级开销，Docker 后端每条命令都要创建容器。依赖旧缺省的配置需显式写 `executor: docker`；只写了 `image` 而没写 `executor` 的配置会报错并给出这条提示。native 后端不可用时 Build 失败，不回退。
 - 修复：沙箱执行器每条命令前都完整探测一次后端，Docker 后端要为此创建多个容器，在机械硬盘上一条 `true` 也要 35 秒左右。现在按后端、镜像、隔离实现、沙箱模式、网络与 `PATH` 缓存探测通过的结果，同一配置只探测一次：Docker 降到约 3 秒，native 从约 38 毫秒降到 5 毫秒。`Probe` 仍完整探测并刷新缓存；探测失败不缓存。

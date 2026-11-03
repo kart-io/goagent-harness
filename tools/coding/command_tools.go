@@ -113,8 +113,9 @@ type CheckResult struct {
 }
 
 // RunCheck 在工作区根目录用 sh -c 执行宿主配置的检查命令（如测试），超时与输出截断同 run_command。
-func (w *Workspace) RunCheck(ctx context.Context, command string) (CheckResult, error) {
-	r, err := w.execute(ctx, []string{"sh", "-c", command}, ".")
+// args 是命令的位置参数，命令中用 "$@" 引用。
+func (w *Workspace) RunCheck(ctx context.Context, command string, args ...string) (CheckResult, error) {
+	r, err := w.execute(ctx, append([]string{"sh", "-c", command, "sh"}, args...), ".")
 	return CheckResult{ExitCode: r.exitCode, Output: r.output, TimedOut: r.timedOut}, err
 }
 
