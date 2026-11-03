@@ -376,9 +376,11 @@ func TestDockerExecutorWorkspace(t *testing.T) {
 	require.NoError(t, err)
 	res = mustSucceed(t, w, ToolRunCommand, map[string]any{"command": "sleep 60"})
 	require.Equal(t, true, res["timed_out"])
-	left, err := exec.Command("docker", "ps", "-aq", "--filter", "name=goagent-env-", "--filter", "volume="+root).Output()
-	require.NoError(t, err)
-	require.Empty(t, strings.TrimSpace(string(left)), "timed out container must be removed")
+	// 负载高时 docker rm -f 会在守护进程删除完成前返回（removal already in progress），所以等删除完成。
+	require.Eventually(t, func() bool {
+		left, err := exec.Command("docker", "ps", "-aq", "--filter", "name=goagent-env-", "--filter", "volume="+root).Output()
+		return err == nil && strings.TrimSpace(string(left)) == ""
+	}, 15*time.Second, 200*time.Millisecond, "timed out container must be removed")
 }
 
 // 命令把子进程放到后台后立即退出，子进程仍持有输出管道：应作为正常结果返回而非中止运行。

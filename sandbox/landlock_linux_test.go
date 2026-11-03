@@ -438,7 +438,8 @@ func fakeCommand(t *testing.T, name, script string) {
 
 // 调用方的超时和取消不能被报告成沙箱不可用：调用方靠 errors.Is 区分“重试”和“换后端”。
 func TestProbeInterruptKeepsContextError(t *testing.T) {
-	const hang = "[ \"$1\" = rm ] && exit 0\nexec sleep 30"
+	// 创建不随 ctx 取消，所以假 docker 只在运行阶段挂住。
+	const hang = "case \"$1\" in rm) exit 0 ;; create) echo id; exit 0 ;; esac\nexec sleep 30"
 	backends := []struct {
 		name     string
 		executor Executor
