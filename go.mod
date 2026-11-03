@@ -3,7 +3,7 @@ module github.com/kart-io/goagent-harness
 go 1.26.0
 
 require (
-	github.com/kart-io/goagent v0.37.0
+	github.com/kart-io/goagent v0.38.1
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/stretchr/testify v1.12.1
 	golang.org/x/crypto v0.58.0
