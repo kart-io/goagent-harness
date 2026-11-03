@@ -85,7 +85,7 @@ presets:
 | `skills` | `dirs`（默认 .agents/skills、.claude/skills） | 单例。列出技能并提供 `load_skill` |
 | `subagent` | `preset`、`toolName`、`description`、`toolFilter`、`maxDepth`（默认 1）、`timeout`（默认 10m） | 可多行。把任务交给另一个 preset 装配的子 Agent |
 | `plan-mode` | `initial`（默认 true）、`allow`（缺省为只读工具） | 单例。计划模式，见下文 |
-| `compaction` | `maxTokens`（默认 100000）、`keepTokens`（默认 maxTokens/4）、`instructions` | 单例。对话压缩，需要 `Host.CompactionModel`，见下文 |
+| `compaction` | `maxTokens`（默认 100000）、`keepTokens`（默认 maxTokens/4）、`instructions` | 单例。对话压缩，需要 `Host.CompactionModel`；保留用户原话、获批计划与待办，见下文 |
 | `loop-detect` | `window`（默认 30）、`repeats`（默认 3）、`fileEdits`（默认 8）、`editTools`（默认 write_file、edit_file、multi_edit）、`haltRepeats`（默认 0 不结束） | 单例。最近的工具调用中相同参数与相同结果重复，或同一文件反复编辑时，在工具结果后追加提醒，要求模型换一种做法；`haltRepeats` 达到时结束本轮并说明原因。只依据消息历史，持久运行恢复时结果一致 |
 | `verify-before-stop` | `command`（必填）、`maxAttempts`（默认 3） | 单例，需要 `workspace`。模型给出最终答复前在工作区运行检查命令，失败时把输出交还模型续跑；本会话还没有经写入类工具改动文件时不检查。命令与 `run_command` 同样只继承 `envAllowlist` 放行的环境变量 |
 
@@ -218,7 +218,10 @@ preset.Build(ctx, p, preset.Host{..., CompactionModel: cheapClient})
 ```
 
 - 每步请求前估算对话长度（UTF-8 字节数的三分之一，对英文偏保守），超过 `maxTokens` 时把较早的消息交给 `Host.CompactionModel` 写成一条 `[此前对话的摘要]` user 消息；system、最近约 `keepTokens` 的消息与本步新收到的输入原样保留，保留区从非 tool 消息开始，不会拆开工具调用与其结果。
-- 模型请求因超出上下文失败时（`llm.ClassifyError` 的 `ShouldCompress`）强制压缩后重试，只在非持久运行中生效。
+- 模型请求因超出上下文失败时（`llm.ClassifyError` 的 `ShouldCompress`）强制压缩后重试，只保留最近一次交互，只在非持久运行中生效。
+- 被压缩的部分中这些内容原样保留，不交给摘要模型改写：第一条用户消息（通常是任务原文）与从最近往前的用户消息，合计约 `keepTokens/2`；最近一次获批的 `exit_plan_mode` 计划，记为 `[已获批的计划]` user 消息，之后的压缩继续保留。摘要、`loop-detect` 提醒与 `verify-before-stop` 反馈不算用户消息。有 `workspace` 时，当前待办附在摘要之后。
+- 旧摘要交给摘要模型时不截断，其余消息每条截到 4000 字符。被压缩的部分只剩旧摘要和上述原样保留的消息时不再压缩，避免让摘要模型复述旧摘要。
+- 摘要请求计入 ctx 中的根预算：先预留一次请求，再登记用量；预算耗尽或运行被取消时中止。其他失败（服务错误、空摘要）不中止，摘要改为说明省略了多少条消息、调用过哪些工具。
 - 持久运行中压缩随该步的 PreStep 记入日志，恢复时回放摘要，不再调用摘要模型。
 
 ## 持久运行

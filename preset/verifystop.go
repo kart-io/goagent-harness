@@ -12,6 +12,9 @@ import (
 // ComponentVerifyBeforeStop 是结束前验证组件名。
 const ComponentVerifyBeforeStop = "verify-before-stop"
 
+// verifyFeedbackPrefix 开头的续跑消息来自本组件，压缩时不当作用户原话。
+const verifyFeedbackPrefix = "结束前的验证"
+
 // VerifyBeforeStopConfig 是 verify-before-stop 组件的配置。模型给出最终答复时，在工作区运行 Command；
 // 退出码非零或超时则把输出作为 user 消息交还模型续跑，最多 MaxAttempts 次。工作区尚无写入类工具的改动时不运行，
 // 纯问答不必付出检查的代价；run_command 对文件的改动不计入。
@@ -52,7 +55,7 @@ func init() {
 					if ctx.Err() != nil {
 						return "", err
 					}
-					return fmt.Sprintf("结束前的验证命令 `%s` 无法运行：%v。请检查环境；无法解决时在答复中说明未经验证。", cfg.Command, err), nil
+					return fmt.Sprintf(verifyFeedbackPrefix+"命令 `%s` 无法运行：%v。请检查环境；无法解决时在答复中说明未经验证。", cfg.Command, err), nil
 				}
 				if r.ExitCode == 0 && !r.TimedOut {
 					return "", nil
@@ -61,7 +64,7 @@ func init() {
 				if r.TimedOut {
 					status = "超时"
 				}
-				return fmt.Sprintf("结束前的验证未通过（第 %d/%d 次）：`%s` %s。\n输出：\n%s\n请修复后再给出最终答复；确实无法修复时说明原因。",
+				return fmt.Sprintf(verifyFeedbackPrefix+"未通过（第 %d/%d 次）：`%s` %s。\n输出：\n%s\n请修复后再给出最终答复；确实无法修复时说明原因。",
 					s.Blocked+1, cfg.MaxAttempts, cfg.Command, status, r.Output), nil
 			})
 			return nil
