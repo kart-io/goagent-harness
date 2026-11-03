@@ -16,7 +16,7 @@ const ComponentVerifyBeforeStop = "verify-before-stop"
 // 退出码非零或超时则把输出作为 user 消息交还模型续跑，最多 MaxAttempts 次。工作区尚无写入类工具的改动时不运行，
 // 纯问答不必付出检查的代价；run_command 对文件的改动不计入。
 type VerifyBeforeStopConfig struct {
-	// Command 是检查命令，如 go test ./...，用 sh -c 在工作区根目录执行。
+	// Command 是检查命令，如 go test ./...，用 sh -c 在工作区根目录执行；与 run_command 一样只继承 workspace 的 envAllowlist 放行的环境变量。
 	Command string `yaml:"command"`
 	// MaxAttempts 是因验证失败续跑的上限，默认 3；用尽后按模型的答复结束。
 	MaxAttempts int `yaml:"maxAttempts"`
