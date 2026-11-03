@@ -2,6 +2,7 @@
 
 ## 未发布
 
+- 新增 `eval/swebench`：在 SWE-bench Multilingual 的 Go 子集（42 题，caddy、gin、prometheus、hugo、terraform）上评测编码 Agent。Agent 在 native 沙箱中解题，Go 版本按官方镜像设置 `GOTOOLCHAIN`；补丁由官方镜像和官方评测脚本判定，先用官方补丁校验每题的评测环境。镜像在后台预拉，中断后重跑跳过已完成的部分，每次模型请求的耗时写入 `requests.log`。
 - 变更：`workspace` 的 `executor` 缺省值由 `docker` 改为 `native`。本机沙箱每条命令只需毫秒级开销，Docker 后端每条命令都要创建容器。依赖旧缺省的配置需显式写 `executor: docker`；只写了 `image` 而没写 `executor` 的配置会报错并给出这条提示。native 后端不可用时 Build 失败，不回退。
 - 修复：沙箱执行器每条命令前都完整探测一次后端，Docker 后端要为此创建多个容器，在机械硬盘上一条 `true` 也要 35 秒左右。现在按后端、镜像、隔离实现、沙箱模式、网络与 `PATH` 缓存探测通过的结果，同一配置只探测一次：Docker 降到约 3 秒，native 从约 38 毫秒降到 5 毫秒。`Probe` 仍完整探测并刷新缓存；探测失败不缓存。
 - 新增 `wrap-up` 组件：本轮最后一次请求撤掉工具时，以及距运行截止不到 `warnBefore`（默认 1m）时，要求模型收尾并说明未完成的部分。原先两种情况模型都不知情。`preset.Loop` 增加 `Request`，组件经 `Assembler.AddRequest` 按步调整推理强度或换模型。需要 GoAgent 的 `PromptScope.Final`、`Deadline` 与 `ModelRequest.Final`。
