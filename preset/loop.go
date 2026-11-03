@@ -1,6 +1,8 @@
 package preset
 
 import (
+	"slices"
+
 	"github.com/kart-io/goagent/builder"
 	"github.com/kart-io/goagent/core"
 )
@@ -47,14 +49,17 @@ func (a *Assembler) AddPromptContext(c builder.PromptContext) {
 	a.slot().loop.PromptContexts = append(a.slot().loop.PromptContexts, c)
 }
 
+// transientRetries 是模型请求遇到 429、5xx 与连接错误时的重试次数。
+const transientRetries = 3
+
 // Configure 把装配结果交给 Builder：系统提示词、工具与循环扩展点。
+// 编码 Agent 的会话很长，默认让模型看到可恢复的工具失败（WithToolErrorFeedback），
+// 并在组件钩子之后重试暂时性的模型请求失败（RetryTransient）。
 func Configure[C any, S core.State](b *builder.AgentBuilder[C, S], asm *Assembly) *builder.AgentBuilder[C, S] {
 	l := asm.Loop
-	b = b.WithSystemPrompt(asm.SystemPrompt).WithTools(asm.Tools...).
+	return b.WithSystemPrompt(asm.SystemPrompt).WithTools(asm.Tools...).
 		WithPreStep(l.PreStep...).WithTurnStopping(l.TurnStopping...).
-		WithPromptSections(l.PromptSections...).WithPromptContexts(l.PromptContexts...)
-	if len(l.RequestError) > 0 {
-		b = b.WithRequestError(0, l.RequestError...)
-	}
-	return b
+		WithPromptSections(l.PromptSections...).WithPromptContexts(l.PromptContexts...).
+		WithRequestError(0, append(slices.Clone(l.RequestError), builder.RetryTransient(transientRetries, nil))...).
+		WithToolErrorFeedback()
 }

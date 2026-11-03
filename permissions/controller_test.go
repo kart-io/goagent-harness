@@ -365,3 +365,18 @@ func TestSetSessionRespectsLiveParentAndPinnedRoots(t *testing.T) {
 		}
 	})
 }
+
+// 审批超时按拒绝交给模型，运行继续；父 ctx 结束时仍返回错误。
+func TestApprovalTimeoutIsDenial(t *testing.T) {
+	c := fixture(t, tools.ApproverFunc(func(context.Context, tools.ApprovalRequest) (tools.ApprovalResult, error) {
+		return tools.ApprovalResult{}, context.DeadlineExceeded
+	}), nil)
+	ran := false
+	out, err := c.Around()(context.Background(), escalation(), func(context.Context) (*interfaces.ToolOutput, error) { ran = true; return nil, nil })
+	if err != nil || ran {
+		t.Fatalf("err=%v ran=%v", err, ran)
+	}
+	if msg, ok := tools.RejectedResult(out); !ok || !strings.Contains(msg, "timed out") {
+		t.Fatalf("want timeout denial, got %#v", out)
+	}
+}
