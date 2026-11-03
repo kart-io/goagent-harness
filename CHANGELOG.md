@@ -2,6 +2,8 @@
 
 ## 未发布
 
+- 新增 `verify-before-stop`：模型给出最终答复前在工作区运行检查命令，失败时把输出交还模型续跑，默认最多 3 次。本会话还没有经写入类工具改动文件时不检查。`coding.Workspace` 增加 `RunCheck`。
+- `claude-code-hooks` 的 `Stop`：`stop_hook_active` 只在本轮已因 Stop 钩子续跑时为 true，用户 Steer 不再使它为 true。需要 GoAgent 的 `Stopping.Blocked`。
 - 修复：调用方的超时或取消在探测期间到期时，Docker 后端和固定 `Executor.Runner` 的 native 后端返回 `ErrUnavailable`，现在返回上下文错误，与自动选择后端时一致。
 - 依赖升级到 GoAgent v0.37.0。
 - 新增 `effects`：持久的外部副作用队列，决定与待办原子提交，结果未知时不盲目重做。

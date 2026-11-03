@@ -105,6 +105,19 @@ func (w *Workspace) execute(ctx context.Context, argv []string, dir string) (run
 	return r, nil
 }
 
+// CheckResult 是 RunCheck 的结果。
+type CheckResult struct {
+	ExitCode int
+	Output   string
+	TimedOut bool
+}
+
+// RunCheck 在工作区根目录用 sh -c 执行宿主配置的检查命令（如测试），超时与输出截断同 run_command。
+func (w *Workspace) RunCheck(ctx context.Context, command string) (CheckResult, error) {
+	r, err := w.execute(ctx, []string{"sh", "-c", command}, ".")
+	return CheckResult{ExitCode: r.exitCode, Output: r.output, TimedOut: r.timedOut}, err
+}
+
 // truncateOutput 超出 limit 时保留首尾各一半：编译错误多在开头，测试结论多在结尾。
 func truncateOutput(out []byte, limit int) (string, bool) {
 	if len(out) <= limit {
