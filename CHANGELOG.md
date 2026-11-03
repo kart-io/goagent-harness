@@ -2,6 +2,7 @@
 
 ## 未发布
 
+- 新增 `env-context` 组件：装配时在工作区执行器内探测系统、git 状态与工具链版本，连同根目录列表拼进系统提示词，模型不必先花几步探索环境。`coding.Workspace.Environment` 提供同样的快照。
 - 修复：调用方的超时或取消在探测期间到期时，Docker 后端和固定 `Executor.Runner` 的 native 后端返回 `ErrUnavailable`，现在返回上下文错误，与自动选择后端时一致。
 - 依赖升级到 GoAgent v0.37.0。
 - 新增 `effects`：持久的外部副作用队列，决定与待办原子提交，结果未知时不盲目重做。
