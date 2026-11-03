@@ -43,7 +43,7 @@ registry := &sandbox.Registry{Namespace: taskID, Providers: map[string]sandbox.P
 - **不支持：** `danger-full-access` 和额外可写目录，这两种策略直接拒绝。
 - **不防什么：** 隔离只限制写入、网络和进程，不限制读取，**同一台主机上的实例能读到彼此的文件**，也能读这个账户可读的任何文件。不要把不同租户放在同一账户下。远端主机和 `sandbox-runner` 属于可信基础设施，摘要校验防的是版本不符，不防恶意主机。
 - **隔离程度：** 用 `Provider.Probe` 查看实际的 `Runner` 和 `Enforcement`。要求绝对边界的宿主应当拒绝 `partial`。
-- **验证范围：** 契约和断线用例在真实 OpenSSH 上通过，覆盖 Ubuntu 22.04（5.15，bwrap）、24.04（6.8，Landlock `partial` 和 bwrap）和容器。设置 `GOAGENT_SSH_ADDR`、`GOAGENT_SSH_KEY`、`GOAGENT_SSH_HOST_KEY`、`GOAGENT_SSH_EXPECT_RUNNER` 后，`TestSSH*` 会连到你指定的主机（用户须叫 `agent`）。
+- **验证范围：** 契约和断线用例在真实 OpenSSH 上通过，覆盖 Ubuntu 22.04（5.15，bwrap）、24.04 和 24.10（6.8 和 6.11，Landlock `partial` 和 bwrap）、25.04 和 25.10（6.14 和 6.17，bwrap 和 Landlock `full`）以及容器。设置 `GOAGENT_SSH_ADDR`、`GOAGENT_SSH_KEY`、`GOAGENT_SSH_HOST_KEY`、`GOAGENT_SSH_EXPECT_RUNNER` 后，`TestSSH*` 会连到你指定的主机（用户须叫 `agent`）。
 - **Landlock 下的已知缺口：** `sandbox-runner` 自己被 SIGKILL 时（比如 OOM）漏掉命令的子进程。Bubblewrap 没有这个问题。
 - **文件操作不进沙箱：** 文件工具走远端命令，路径边界由 `sshsandbox` 检查，运行中的命令可能在检查和操作的间隙替换路径。
 

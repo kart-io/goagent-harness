@@ -425,3 +425,75 @@ func TestRunnerRejectedForOtherBackends(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// fakeCommand 在 PATH 最前面放一个假命令，让探测确定地卡在或失败于这一步，不依赖机器速度。
+func fakeCommand(t *testing.T, name, script string) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+script+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+}
+
+// 调用方的超时和取消不能被报告成沙箱不可用：调用方靠 errors.Is 区分“重试”和“换后端”。
+func TestProbeInterruptKeepsContextError(t *testing.T) {
+	const hang = "[ \"$1\" = rm ] && exit 0\nexec sleep 30"
+	backends := []struct {
+		name     string
+		executor Executor
+		command  string
+	}{
+		{"docker", Executor{Backend: "docker", Image: "fake"}, "docker"},
+		{"pinned-bwrap", Executor{Backend: "native", Runner: RunnerBubblewrap}, "bwrap"},
+		{"pinned-landlock", Executor{Backend: "native", Runner: RunnerLandlock}, "curl"},
+	}
+	interrupts := []struct {
+		name string
+		ctx  func() (context.Context, context.CancelFunc)
+		want error
+	}{
+		{"deadline", func() (context.Context, context.CancelFunc) {
+			return context.WithTimeout(context.Background(), 300*time.Millisecond)
+		}, context.DeadlineExceeded},
+		{"cancel", func() (context.Context, context.CancelFunc) {
+			ctx, cancel := context.WithCancel(context.Background())
+			time.AfterFunc(300*time.Millisecond, cancel)
+			return ctx, cancel
+		}, context.Canceled},
+	}
+	for _, b := range backends {
+		for _, in := range interrupts {
+			t.Run(b.name+"/"+in.name, func(t *testing.T) {
+				if b.executor.Runner == RunnerLandlock && landlockABI() < landlockMinABI {
+					t.Skip("Landlock 不可用")
+				}
+				fakeCommand(t, b.command, hang)
+				e := b.executor
+				e.Policy = Policy{WorkspaceRoot: t.TempDir(), Mode: WorkspaceWrite, Network: NetworkDeny}
+
+				ctx, cancel := in.ctx()
+				defer cancel()
+				_, err := e.Probe(ctx)
+				if !errors.Is(err, in.want) || errors.Is(err, ErrUnavailable) {
+					t.Fatalf("Probe 返回 %v，应当是 %v", err, in.want)
+				}
+
+				ctx, cancel = in.ctx()
+				defer cancel()
+				_, err = e.Run(ctx, env.Command{Argv: []string{"true"}})
+				if !errors.Is(err, in.want) || errors.Is(err, ErrUnavailable) {
+					t.Fatalf("Run 返回 %v，应当是 %v", err, in.want)
+				}
+			})
+		}
+	}
+}
+
+func TestProbeFailureWithLiveContextIsUnavailable(t *testing.T) {
+	fakeCommand(t, "bwrap", "exit 1")
+	e := Executor{Backend: "native", Runner: RunnerBubblewrap, Policy: Policy{WorkspaceRoot: t.TempDir(), Mode: WorkspaceWrite, Network: NetworkDeny}}
+	if _, err := e.Probe(context.Background()); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("探测返回 %v，应当是 ErrUnavailable", err)
+	}
+}

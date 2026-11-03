@@ -82,7 +82,11 @@ func (e *Executor) Probe(ctx context.Context) (Report, error) {
 // probe 选出第一个通过完整探测的实现。探测包含越界写入和网络的反向验证，所以 bwrap 能启动但兑现不了策略时也不会被选中。
 func (e *Executor) probe(ctx context.Context, p Policy) (Report, error) {
 	if e.Backend != "native" || runtime.GOOS != "linux" || e.Runner != "" {
-		return e.probeRunner(ctx, p)
+		report, err := e.probeRunner(ctx, p)
+		if err != nil && ctx.Err() != nil {
+			return report, ctx.Err()
+		}
+		return report, err
 	}
 	var failures error
 	for _, runner := range []string{RunnerBubblewrap, RunnerLandlock} {

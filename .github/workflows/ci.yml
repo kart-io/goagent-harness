@@ -49,7 +49,9 @@ jobs:
       - name: Test
         env:
           GOAGENT_DOCKER_TESTS: "1"
-        run: go test -race -count=1 -timeout=25m ./...
+          HARNESS_SANDBOX_DOCKER_IMAGE: alpine:3.20
+          GOAGENT_CODING_DOCKER_IMAGE: alpine:3.20
+        run: go test -race -count=1 -v -timeout=25m ./...
 
       # 独立模块，CI 里用真实 Postgres 覆盖租约防护
       - name: Test on Postgres
