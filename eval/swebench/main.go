@@ -61,6 +61,7 @@ type Result struct {
 	Seconds    float64           `json:"seconds"`
 	ModelCalls string            `json:"model_calls,omitempty"`
 	Model      string            `json:"model,omitempty"`
+	Verify     string            `json:"verify,omitempty"`
 	// Category 是结果的分类，见 categorize。
 	Category string `json:"category,omitempty"`
 }
@@ -74,6 +75,7 @@ var (
 	parallel = flag.Int("parallel", 4, "并行题数")
 	pulls    = flag.Int("pulls", 3, "后台并行拉取镜像数")
 	runs     = flag.Int("runs", 1, "agent 每题重复次数")
+	verify   = flag.String("verify", "test", "Agent 结束前的检查：test（编译后测试改动过的包）或 build（只编译，用于对比）")
 	model    = flag.String("model", "deepseek", "Agent 使用的模型：deepseek（deepseek-chat）或 minimax（MiniMax-M3）")
 	maxIter  = flag.Int("max-iterations", 100, "Agent 每题的模型请求上限")
 	timeout  = flag.Duration("timeout", 30*time.Minute, "Agent 每题的运行时限")
@@ -113,6 +115,9 @@ func main() {
 	if slices.Contains(steps, "agent") {
 		if _, _, err := newModel(); err != nil {
 			fatal(err)
+		}
+		if _, ok := verifyCommands[*verify]; !ok {
+			fatal(fmt.Errorf("未知的 -verify %q，可选 test、build", *verify))
 		}
 	}
 	if err := os.MkdirAll(*outDir, 0o755); err != nil {
@@ -268,9 +273,11 @@ func doneRuns(path string) map[string]bool {
 	return done
 }
 
-// modelFailure 报告 Agent 运行是否因模型请求失败而中止。
+// modelFailure 报告 Agent 运行是否因模型请求失败而中止。运行时限恰好在请求途中到期时错误同样标为
+// [LLM_REQUEST]，但原因是 Agent 用完了时间，不算模型服务的问题。
 func modelFailure(r Result) bool {
-	return r.Mode == "agent" && !r.Resolved && strings.Contains(r.AgentError, "[LLM_REQUEST]")
+	return r.Mode == "agent" && !r.Resolved && strings.Contains(r.AgentError, "[LLM_REQUEST]") &&
+		!strings.Contains(r.AgentError, "context deadline exceeded")
 }
 
 func evaluate(inst Instance, mode string, run int, pullErr error) (r Result) {
@@ -304,7 +311,7 @@ func evaluate(inst Instance, mode string, run int, pullErr error) (r Result) {
 		if err != nil {
 			r.AgentError = err.Error()
 		}
-		r.Model = *model
+		r.Model, r.Verify = *model, *verify
 	default:
 		r.Error = "未知模式 " + mode
 		return r
@@ -314,8 +321,18 @@ func evaluate(inst Instance, mode string, run int, pullErr error) (r Result) {
 		r.Error = err.Error()
 		return r
 	}
-	log, err := runEval(inst, dir)
+	// 官方镜像缺的依赖在评测时才下载，网络偶发超时会让测试包无法编译、目标测试记为 MISSING，与补丁无关，所以重试。
+	var log string
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		if log, err = runEval(inst, dir); err != nil || !downloadFailed.MatchString(log) {
+			break
+		}
+	}
 	_ = os.WriteFile(filepath.Join(dir, "eval.log"), []byte(log), 0o644)
+	if err == nil && downloadFailed.MatchString(log) {
+		err = fmt.Errorf("下载依赖失败：%s", downloadFailed.FindString(log))
+	}
 	if err != nil {
 		r.Error = "评测: " + err.Error()
 		return r
@@ -354,7 +371,7 @@ func runAgent(inst Instance, dir string) (string, string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout+10*time.Minute)
 	defer cancel()
 	abs, _ := filepath.Abs(dir)
-	cmd := exec.CommandContext(ctx, self, "-worker", inst.InstanceID, "-data", *dataPath, "-dir", abs, "-go-env", *goEnv, "-model", *model,
+	cmd := exec.CommandContext(ctx, self, "-worker", inst.InstanceID, "-data", *dataPath, "-dir", abs, "-go-env", *goEnv, "-model", *model, "-verify", *verify,
 		"-max-iterations", fmt.Sprint(*maxIter), "-timeout", timeout.String())
 	cmd.Env = append(os.Environ(), "GOTOOLCHAIN="+version, "HOME="+home, "GOPATH="+gopath,
 		"GOMODCACHE="+filepath.Join(gopath, "pkg", "mod"), "GOCACHE="+gocache, "GOFLAGS=-buildvcs=false")
@@ -446,6 +463,9 @@ func runEval(inst Instance, dir string) (string, error) {
 }
 
 const applyFailed = ">>>>> Patch Apply Failed"
+
+// downloadFailed 匹配 go 命令下载模块失败的输出，如 Get "https://proxy.golang.org/x/@v/v1.mod": net/http: TLS handshake timeout。
+var downloadFailed = regexp.MustCompile(`Get "https?://[^"]+/@v/[^"]+": [^\n]*`)
 
 // goTestLine 同 SWE-bench 的 parse_log_gotest。
 var goTestLine = regexp.MustCompile(`^\s*--- (PASS|FAIL|SKIP): (\S+) \(`)

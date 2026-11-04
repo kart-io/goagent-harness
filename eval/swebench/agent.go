@@ -22,11 +22,14 @@ const systemPrompt = `你是一个严谨的编码 Agent，在 Git 仓库中修�
 用 read_file、grep、glob 阅读代码，用 edit_file 修改，用 run_command 编译和运行相关测试（命令在仓库根目录执行，Go 工具链已就绪）。
 不要提交，也不要修改已有的测试；可以新增测试帮助验证。完成后用几句话说明改了什么。`
 
-// verifyCommand 是结束前的检查：先编译全部包，再测试改动过的包。只编译时补丁常能编译却没修对；
+// verifyCommands 是结束前的检查，按 -verify 选择。test 先编译全部包，再测试改动过的包。只编译时补丁常能编译却没修对；
 // 整个仓库的测试太慢，且常有与改动无关、在沙箱中本就失败的用例。改动过的文件由 verify-before-stop 作为位置参数传入。
-const verifyCommand = `go build ./... || exit 1
+var verifyCommands = map[string]string{
+	"build": "go build ./...",
+	"test": `go build ./... || exit 1
 pkgs=$(for f in "$@"; do case "$f" in */testdata/*) ;; *.go) d=$(dirname "$f"); [ -d "$d" ] && echo "./$d" ;; esac; done | sort -u)
-[ -z "$pkgs" ] || go test $pkgs`
+[ -z "$pkgs" ] || go test $pkgs`,
+}
 
 // goEnvNames 是 Agent 命令需要的 Go 环境变量，由父进程按题设置；沙箱里的命令只继承这些与 PATH 等少数变量。
 var goEnvNames = []string{"GOTOOLCHAIN", "HOME", "GOPATH", "GOMODCACHE", "GOCACHE", "GOFLAGS", "GOPROXY", "GOSUMDB", "GONOSUMDB", "GOPRIVATE"}
@@ -61,7 +64,7 @@ func solve(inst Instance, dir string) error {
 		map[string]any{"id": "permissions", "use": "permissions", "config": map[string]any{"base": "coding"}},
 		map[string]any{"id": "spill", "use": "spill"},
 		map[string]any{"id": "loop", "use": "loop-detect"},
-		map[string]any{"id": "verify", "use": "verify-before-stop", "config": map[string]any{"command": verifyCommand}},
+		map[string]any{"id": "verify", "use": "verify-before-stop", "config": map[string]any{"command": verifyCommands[*verify]}},
 		map[string]any{"id": "compact", "use": "compaction", "config": map[string]any{"maxTokens": 60000}},
 		map[string]any{"id": "wrap", "use": "wrap-up"},
 	}}}}
@@ -132,7 +135,8 @@ func newModel() (modelClient, int, error) {
 	switch *model {
 	case "deepseek":
 		c, err := providers.NewDeepSeekWithOptions(append(opts, llm.WithAPIKey(os.Getenv(key)), llm.WithModel("deepseek-chat"))...)
-		return c, 2000, err
+		// deepseek-chat 的输出上限是 8K；Builder 默认的 2000 装不下一次较大的 edit_file。
+		return c, 8192, err
 	case "minimax":
 		// MiniMax 的 OpenAI 兼容接口把思考过程以 <think> 写在 content 里，原样留在历史中正是它要求的交错思考用法；
 		// 思考也计入输出 token，默认的 2000 常在调用工具前就被耗尽。

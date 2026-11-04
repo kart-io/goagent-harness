@@ -50,6 +50,7 @@ func categorize(r Result, applyFailed bool) string {
 // Summary 汇总一个结果目录中的 Agent 运行，写入 summary.json，供之后的运行用 -baseline 比较。
 type Summary struct {
 	Model          string                     `json:"model"`
+	Verify         string                     `json:"verify,omitempty"`
 	Runs           int                        `json:"runs"`
 	Resolved       int                        `json:"resolved"`
 	Rate           float64                    `json:"rate"`
@@ -114,7 +115,7 @@ func summarize(path string, all []Instance) (Summary, error) {
 		r := latest[key]
 		s.Categories[r.Category]++
 		if s.Model == "" {
-			s.Model = r.Model
+			s.Model, s.Verify = r.Model, r.Verify
 		}
 		if r.Category == CatEnv || r.Category == CatModelService {
 			continue
@@ -189,7 +190,7 @@ func report(all []Instance) error {
 	if err := os.WriteFile(filepath.Join(*outDir, "summary.json"), append(b, '\n'), 0o644); err != nil {
 		return err
 	}
-	fmt.Printf("\n汇总（%s）：%d/%d 已解决（%.0f%%），平均 %.0fs、%.0f 次模型请求\n", s.Model, s.Resolved, s.Runs, s.Rate*100, s.AvgSeconds, s.AvgModelCalls)
+	fmt.Printf("\n汇总（%s %s）：%d/%d 已解决（%.0f%%），平均 %.0fs、%.0f 次模型请求\n", s.Model, s.Verify, s.Resolved, s.Runs, s.Rate*100, s.AvgSeconds, s.AvgModelCalls)
 	for _, c := range categoryOrder {
 		if n := s.Categories[c]; n > 0 {
 			fmt.Printf("  %-14s %d\n", c, n)
