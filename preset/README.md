@@ -86,7 +86,7 @@ presets:
 | `subagent` | `preset`、`toolName`、`description`、`toolFilter`、`maxDepth`（默认 1）、`timeout`（默认 10m） | 可多行。把任务交给另一个 preset 装配的子 Agent |
 | `plan-mode` | `initial`（默认 true）、`allow`（缺省为只读工具） | 单例。计划模式，见下文 |
 | `compaction` | `maxTokens`（默认 100000）、`keepTokens`（默认 maxTokens/4）、`instructions` | 单例。对话压缩，需要 `Host.CompactionModel`；保留用户原话、获批计划与待办，见下文 |
-| `loop-detect` | `window`（默认 30）、`repeats`（默认 3）、`fileEdits`（默认 8）、`editTools`（默认 write_file、edit_file、multi_edit）、`haltRepeats`（默认 0 不结束） | 单例。最近的工具调用中相同参数与相同结果重复，或同一文件反复编辑时，在工具结果后追加提醒，要求模型换一种做法；`haltRepeats` 达到时结束本轮并说明原因。只依据消息历史，持久运行恢复时结果一致 |
+| `loop-detect` | `window`（默认 30）、`repeats`（默认 3）、`fileEdits`（默认 8）、`commandRepeats`（默认 6）、`editTools`（默认 write_file、edit_file、multi_edit）、`haltRepeats`（默认 0 不结束） | 单例。最近的工具调用中相同参数与相同结果重复、同一文件反复编辑，或相近的 `run_command` 命令反复运行时（只比较第一行与管道之前的部分，去掉 `2>&1`、`>/dev/null` 与 `-flag=value`），在工具结果后追加提醒，要求模型换一种做法；`haltRepeats` 达到时结束本轮并说明原因。只依据消息历史，持久运行恢复时结果一致 |
 | `verify-before-stop` | `command`（必填）、`maxAttempts`（默认 3） | 单例，需要 `workspace`。模型给出最终答复前在工作区运行检查命令，失败时把输出交还模型续跑；本会话还没有经写入类工具改动文件时不检查。改动过的文件按路径排序作为位置参数传给命令，可用 `"$@"` 只检查相关部分。命令与 `run_command` 同样只继承 `envAllowlist` 放行的环境变量 |
 | `wrap-up` | `warnBefore`（默认 1m） | 单例。本轮最后一次请求撤掉工具时，以及距运行截止不到 `warnBefore` 时，在运行上下文中要求模型收尾，说明已完成和未完成的部分；运行没有截止时间时只做前一种提示 |
 
