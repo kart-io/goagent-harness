@@ -2,6 +2,11 @@
 
 ## 未发布
 
+- `loop-detect`（版本 2）：新增相近命令的提醒（`commandRepeats`，默认 6）。DeepSeek 实测中常反复运行同一测试、只换 `-count` 与输出过滤，或用 heredoc 反复重写同一个临时测试文件，每次结果都不同，原有的相同调用统计发现不了，直到用尽 100 次请求。
+- `env-context`（版本 2）：在环境说明中写出命令的沙箱限制：只读或限写、不能联网、native 后端禁用 Unix 域套接字，并说明受限制必然失败的命令不必排查。原先模型会反复排查监听 unix socket 的测试为何失败。
+- 修复 `eval/swebench`：运行时限恰好在模型请求途中到期时，结果被归为 `model_service`、不计入解决率的分母，续跑时还会重做。现在归为 `agent_stopped`。
+- 修复 `eval/swebench`：官方镜像缺的依赖在评测时才下载，网络偶发超时会让测试包无法编译、目标测试记为 MISSING，被当成补丁没修对。现在识别模块下载失败，最多重试 2 次，仍失败则记为环境问题并在续跑时重做。新增 `-verify build|test` 选择 Agent 结束前的检查（默认 test），便于用同一程序对比；结果与 `summary.json` 记录所用的检查。
+- 修复 `eval/swebench`：DeepSeek 每次请求的输出上限由 2000 提高到模型允许的 8192，较大的 `edit_file` 参数原先会被截断（finish=length），运行随之中止。
 - `verify-before-stop`：改动过的文件按路径排序作为位置参数传给检查命令，命令可用 `"$@"` 只测试相关的包，不必在编译与全量测试之间二选一。验证失败的反馈提示模型：与本次改动无关的失败（如改动前就失败的测试）说明即可，不要修改无关代码。`coding.Workspace.RunCheck` 增加可选的位置参数。
 - `eval/swebench`：每条结果带上分类（resolved、wrong_fix、regression、no_patch、apply_failed、agent_stopped、model_service、env）与所用模型；运行结束写出 `summary.json`（解决率、分类计数、平均耗时与请求数、每题结果），环境与模型服务失败不计入分母。`-baseline` 与之前的 `summary.json` 比较，有退步时退出码为 2；`-mode report` 只汇总已有结果；`-ids @文件` 从文件读取题号。Agent 结束前的检查由 `go build ./...` 改为编译后再测试改动过的包。按 `-model` 检查对应的 API Key，原先总是要求 `DEEPSEEK_API_KEY`。
 - 新增 `eval/swebench`：在 SWE-bench Multilingual 的 Go 子集（42 题，caddy、gin、prometheus、hugo、terraform）上评测编码 Agent。Agent 在 native 沙箱中解题，Go 版本按官方镜像设置 `GOTOOLCHAIN`；补丁由官方镜像和官方评测脚本判定，先用官方补丁校验每题的评测环境。镜像在后台预拉，中断后重跑跳过已完成的部分（因模型服务出错而中止的 Agent 运行除外），每次模型请求的耗时写入 `requests.log`。模型请求最多重试 20 次，已输出部分内容再断流的请求也会重发。`-model` 选择 `deepseek`（deepseek-chat，默认）或 `minimax`（MiniMax-M3，经 OpenAI 兼容接口）；MiniMax 的思考计入输出 token，每次请求的输出上限设为 32000，Builder 默认的 2000 常在调用工具前就被耗尽。

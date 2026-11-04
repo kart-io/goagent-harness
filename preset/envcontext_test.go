@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/kart-io/goagent-harness/tools/coding"
 	"github.com/stretchr/testify/require"
 )
 
@@ -71,4 +72,19 @@ func TestEnvContextProbesInsideDocker(t *testing.T) {
 	require.Contains(t, asm.SystemPrompt, "os: Linux")
 	require.Contains(t, asm.SystemPrompt, "apk: apk-tools", "容器内的 Alpine 包管理器")
 	require.NotContains(t, asm.SystemPrompt, "sh: ", "没有版本输出的工具不列出")
+}
+
+// 本地执行器（danger-full-access 且联网）没有限制；native 沙箱提示写入范围、网络与 Unix 域套接字。
+func TestEnvContextDescribesSandboxLimits(t *testing.T) {
+	asm, _ := buildEnvContext(t, `, config: {probe: false}`)
+	require.NotContains(t, asm.SystemPrompt, "命令在沙箱中运行")
+
+	native := WorkspaceInfo{CommandsEnabled: true, Backend: "native", Sandbox: WorkspaceWrite, Network: true}
+	require.Equal(t, []string{"只能写入工作区与额外授权的目录", "不能创建或连接 Unix 域套接字（监听 unix socket 的测试会失败）"}, sandboxLimits(native))
+	native.Sandbox, native.Network = DangerFullAccess, false
+	require.Equal(t, []string{"不能联网", "不能创建或连接 Unix 域套接字（监听 unix socket 的测试会失败）"}, sandboxLimits(native))
+	docker := WorkspaceInfo{CommandsEnabled: true, Backend: "docker", Sandbox: ReadOnly, Network: true}
+	require.Equal(t, []string{"不能写文件"}, sandboxLimits(docker))
+	require.Empty(t, sandboxLimits(WorkspaceInfo{Backend: "native", Sandbox: ReadOnly}), "不提供命令时不说明")
+	require.Contains(t, renderEnvironment(coding.EnvironmentSnapshot{}, native), "命令在沙箱中运行：不能联网；不能创建")
 }

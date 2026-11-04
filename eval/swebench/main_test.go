@@ -14,11 +14,12 @@ func TestDoneRunsSkipsModelFailures(t *testing.T) {
 		{InstanceID: "a", Mode: "gold", Run: 1, Resolved: true},
 		{InstanceID: "a", Mode: "agent", Run: 1, AgentError: "exit status 1: [LLM_REQUEST] [llm] operation=request: 503"},
 		{InstanceID: "b", Mode: "agent", Run: 1, AgentError: "exit status 1: 运行超时"},
+		{InstanceID: "e", Mode: "agent", Run: 1, AgentError: "exit status 1: [LLM_REQUEST] request failed: Post \"https://x\": context deadline exceeded"},
 		{InstanceID: "c", Mode: "agent", Run: 1, Error: "评测: context deadline exceeded"},
 		{InstanceID: "d", Mode: "agent", Run: 1, Resolved: true},
 	})
 	done := doneRuns(path)
-	for key, want := range map[string]bool{"a/gold/1": true, "a/agent/1": false, "b/agent/1": true, "c/agent/1": false, "d/agent/1": true} {
+	for key, want := range map[string]bool{"a/gold/1": true, "a/agent/1": false, "b/agent/1": true, "e/agent/1": true, "c/agent/1": false, "d/agent/1": true} {
 		if _, ok := done[key]; ok != want {
 			t.Errorf("%s 已完成 = %v，期望 %v", key, ok, want)
 		}
@@ -63,6 +64,7 @@ func TestCategorize(t *testing.T) {
 		{Result{Resolved: true, AgentError: "运行超时"}, false, CatResolved},
 		{Result{Error: "镜像: pull"}, false, CatEnv},
 		{Result{Mode: "agent", AgentError: "[LLM_REQUEST] 503"}, false, CatModelService},
+		{Result{Mode: "agent", AgentError: `[LLM_REQUEST] [llm] operation=request: LLM request failed: Post "https://api.minimaxi.com/v1/chat/completions": context deadline exceeded`}, false, CatAgentStopped},
 		{Result{Mode: "agent", AgentError: "模型输出未完整结束：length", PatchBytes: 10}, false, CatAgentStopped},
 		{Result{PatchBytes: 10}, true, CatApplyFailed},
 		{Result{FailToPass: fail}, false, CatNoPatch},
@@ -112,5 +114,20 @@ func TestCompare(t *testing.T) {
 	d := compare(base, cur)
 	if strings.Join(d.Regressed, ",") != "a" || strings.Join(d.Improved, ",") != "b" {
 		t.Errorf("差异 = %+v", d)
+	}
+}
+
+// 官方镜像在评测时下载缺失依赖，网络超时的两种输出都应识别为下载失败。
+func TestDownloadFailed(t *testing.T) {
+	for _, log := range []string{
+		`cmd/commandfuncs.go:35:2: github.com/aryann/difflib@v0.0.0-20210328193216-ff5ff6dc229b: Get "https://proxy.golang.org/github.com/aryann/difflib/@v/v0.0.0-20210328193216-ff5ff6dc229b.zip": net/http: TLS handshake timeout`,
+		`go: golang.org/x/net@v0.0.0-20221004154528-8021a29435af: Get "https://proxy.golang.org/golang.org/x/net/@v/v0.0.0-20221004154528-8021a29435af.mod": net/http: TLS handshake timeout`,
+	} {
+		if !downloadFailed.MatchString("+ go test -v ./x\n" + log + "\nFAIL\n") {
+			t.Errorf("未识别：%s", log)
+		}
+	}
+	if downloadFailed.MatchString("go: downloading github.com/x/y v1.0.0\n--- FAIL: TestA (0.00s)\n") {
+		t.Error("正常下载与测试失败不应识别为下载失败")
 	}
 }

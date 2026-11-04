@@ -86,6 +86,40 @@ func TestLoopDetectFileEdits(t *testing.T) {
 	require.Contains(t, d.warning, "3 次")
 }
 
+// 实测中模型反复运行同一测试、只换 -count 与输出过滤，或用 heredoc 反复重写同一个临时测试文件，每次结果都不同。
+func TestCommandFamily(t *testing.T) {
+	for _, tc := range []struct{ a, b string }{
+		{`go test ./caddytest/integration/ -run TestX -count=5 2>&1 | head -40`, `go test ./caddytest/integration/ -run TestX -count=1 2>&1 | grep -E "FAIL|ok" | head -20`},
+		{"cd modules/logging && cat > zz_test.go <<'EOF'\npackage logging\nEOF", "cd modules/logging && cat > zz_test.go <<'EOF'\npackage logging\n// v2\nEOF"},
+		{`go build ./... >/dev/null && go vet ./x`, `go build ./... 2>/dev/null && go vet ./x`},
+	} {
+		require.Equal(t, commandFamily(tc.a), commandFamily(tc.b))
+	}
+	for _, tc := range []struct{ a, b string }{
+		{"cat > a_test.go <<'EOF'\nx\nEOF", "cat > b_test.go <<'EOF'\nx\nEOF"},
+		{`go test ./a -run TestX`, `go test ./a -run TestY`},
+	} {
+		require.NotEqual(t, commandFamily(tc.a), commandFamily(tc.b))
+	}
+}
+
+func TestLoopDetectSimilarCommands(t *testing.T) {
+	c := defaultLoopConfig()
+	run := func(i int) [3]string {
+		cmd := fmt.Sprintf(`{"command":"go test ./x -run TestA -count=%d 2>&1 | tail -%d"}`, i, i)
+		return [3]string{"run_command", cmd, fmt.Sprintf(`{"exit_code":1,"output":"FAIL %d"}`, i)}
+	}
+	var calls [][3]string
+	for i := 1; i <= 5; i++ {
+		calls = append(calls, run(i))
+	}
+	require.Empty(t, detectLoop(history(calls...), c).warning, "五次不提醒")
+	d := detectLoop(history(append(calls, run(6))...), c)
+	require.Contains(t, d.warning, "相近的命令 6 次")
+	require.Contains(t, d.warning, "go test ./x -run TestA")
+	require.Empty(t, d.halt, "相近命令不触发 haltRepeats")
+}
+
 func TestLoopDetectWindowForgetsOldCalls(t *testing.T) {
 	c := defaultLoopConfig()
 	c.Window = 4
@@ -112,7 +146,7 @@ func TestLoopDetectOnlyAfterToolResults(t *testing.T) {
 }
 
 func TestLoopDetectValidation(t *testing.T) {
-	for _, cfg := range []string{`{repeats: 1}`, `{window: -1}`, `{fileEdits: -1}`, `{haltRepeats: 2}`} {
+	for _, cfg := range []string{`{repeats: 1}`, `{window: -1}`, `{fileEdits: -1}`, `{commandRepeats: -1}`, `{haltRepeats: 2}`} {
 		_, err := Load(trusted(`presets: [{id: p, components: [{id: l, use: loop-detect, config: ` + cfg + `}]}]`))
 		require.Error(t, err, cfg)
 	}
