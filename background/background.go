@@ -998,8 +998,21 @@ func (m *Manager) expire(ctx context.Context) error {
 		}
 	}
 	for _, id := range expired {
-		if err := m.Kill(ctx, id); err != nil {
+		killed := false
+		if err := m.update(ctx, func(state *managerState) ([]effects.Effect, error) {
+			record := findRecord(state, id)
+			// TurnStarted may have cleared the deadline after the scan.
+			// Recheck it under the same lock that commits termination.
+			if record == nil || (record.Status != StatusRunning && record.Status != StatusWaiting) || record.WaitUntil.IsZero() || record.WaitUntil.After(m.cfg.Now()) {
+				return nil, nil
+			}
+			killed = true
+			return m.settle(record, StatusKilled, "", "")
+		}); err != nil {
 			return err
+		}
+		if killed {
+			m.stopChild(id, errKilled)
 		}
 	}
 	return nil

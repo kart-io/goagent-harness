@@ -35,7 +35,7 @@ func call(id, name, args string) scriptTurn {
 	return scriptTurn{chunk: &llm.StreamChunk{Done: true, FinishReason: "tool_calls", ToolCalls: []llm.ToolCall{tc}}}
 }
 
-// scriptModel 按顺序给出回合并记录每次请求的消息；Chat 用于摘要，记录输入并返回 summary。
+// scriptModel 按顺序给出工具回合；CompleteStream 用于摘要，记录输入并流式返回 summary。
 type scriptModel struct {
 	mu       sync.Mutex
 	turns    []scriptTurn
@@ -50,7 +50,7 @@ func (*scriptModel) Provider() constants.Provider { return constants.ProviderCus
 func (m *scriptModel) CompleteStream(_ context.Context, req *llm.CompletionRequest) (<-chan *llm.StreamChunk, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.chats = append(m.chats, req.Messages)
+	m.chats = append(m.chats, slices.Clone(req.Messages))
 	return summaryStream(m.summary, nil), nil
 }
 

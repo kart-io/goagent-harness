@@ -144,6 +144,9 @@ func (e *Executor) probe(ctx context.Context, p Policy) (Report, error) {
 
 func (e *Executor) probeRunner(ctx context.Context, p Policy) (Report, error) {
 	r := Report{Backend: e.Backend, Runner: e.Runner, Enforcement: "unavailable", Network: p.Network}
+	if e.Backend == "native" && runtime.GOOS == "darwin" {
+		r.Runner = "sandbox-exec"
+	}
 	if e.Runner != "" && (e.Backend != "native" || runtime.GOOS != "linux" || (e.Runner != RunnerBubblewrap && e.Runner != RunnerLandlock)) {
 		return r, fmt.Errorf("%w: runner %q on %s/%s", ErrUnavailable, e.Runner, e.Backend, runtime.GOOS)
 	}

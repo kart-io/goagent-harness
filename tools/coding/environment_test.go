@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/kart-io/goagent/harness/env"
@@ -20,7 +21,12 @@ func TestEnvironmentSnapshot(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".env.example"), []byte("A=1\n"), 0o644))
 	mustSucceed(t, w, ToolRunCommand, map[string]any{"command": "git init -q -b feat && git add go.mod && git -c user.name=t -c user.email=t@t commit -qm init && echo x > dirty.txt"})
 
-	snap, err := w.Environment(context.Background(), EnvironmentOptions{Tools: []string{"sh", "git", "no-such-tool-xyz"}})
+	// Control version support instead of assuming the host's sh rejects --version.
+	bin := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "fixture-version"), []byte("#!/bin/sh\nprintf 'fixture v1\\n'\n"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "fixture-no-version"), []byte("#!/bin/sh\necho unsupported >&2\nexit 2\n"), 0o755))
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	snap, err := w.Environment(context.Background(), EnvironmentOptions{Tools: []string{"fixture-version", "fixture-no-version", "git", "no-such-tool-xyz"}})
 	require.NoError(t, err)
 	require.Contains(t, snap.Entries, "cmd/")
 	require.Contains(t, snap.Entries, "go.mod")
@@ -30,7 +36,8 @@ func TestEnvironmentSnapshot(t *testing.T) {
 	require.Contains(t, snap.Probe, "git: 分支 feat，2 个未提交改动")
 	require.Contains(t, snap.Probe, "git: git version")
 	require.NotContains(t, snap.Probe, "no-such-tool-xyz")
-	require.NotContains(t, snap.Probe, "sh: ", "不支持 --version 的工具不列出")
+	require.Contains(t, strings.Split(snap.Probe, "\n"), "fixture-version: fixture v1")
+	require.NotContains(t, snap.Probe, "fixture-no-version: ", "不支持 --version 的工具不列出")
 }
 
 func TestEnvironmentLimitsEntries(t *testing.T) {
