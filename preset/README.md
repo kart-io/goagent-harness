@@ -75,7 +75,7 @@ presets:
 |---|---|---|
 | `persona` | `prompt` | 一段系统提示词 |
 | `instructions` | `files`（默认 AGENTS.md、CLAUDE.md）、`maxBytes`（默认 32768） | 读取工作区内的项目说明，依赖 `workspace` |
-| `env-context` | `tools`（默认 go、node、python3、cargo、java、make、git，`[]` 不探测工具链）、`maxEntries`（默认 60）、`probe`（默认 true） | 单例。装配时在执行器内探测系统、git 分支与未提交改动数、工具链版本，连同根目录列表拼进系统提示词，依赖 `workspace`。探测占用一次命令时间，容器执行器可能数十秒，`probe: false` 只列目录 |
+| `env-context` | `tools`（默认 go、node、python3、cargo、java、make、git，`[]` 不探测工具链）、`maxEntries`（默认 60）、`probe`（默认 true） | 单例。装配时在执行器内探测系统、git 分支与未提交改动数、工具链版本，连同根目录列表拼进系统提示词，依赖 `workspace`。命令受沙箱限制时（只读或限写、不能联网、native 后端禁用 Unix 域套接字）一并说明，避免模型排查必然失败的命令。探测占用一次命令时间，容器执行器可能数十秒，`probe: false` 只列目录 |
 | `workspace` | `sandbox`、`maxSandbox`、`executor`（native 默认/docker/local）、`image`、`network`、`additionalWritableRoots`、`envAllowlist`、`commandTimeout`、`maxOutputBytes`、`linters` | 单例。沙箱模式是硬性要求，见下表 |
 | `coding-tools` | `tools`（缺省为沙箱下可用的全部） | 依赖 `workspace`；列出不可用的工具时 Build 失败 |
 | `permissions` | `approval`（ask/never）、`role`、`base`（coding）、`rules`、`sessionTools` | 可多行，全部规则合并为一个策略，按 Deny > Ask > Allow 取最严格者 |
