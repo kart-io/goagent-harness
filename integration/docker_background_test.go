@@ -138,18 +138,8 @@ func (m *scriptedModel) seen() string {
 	return string(raw)
 }
 
-func (m *scriptedModel) Complete(context.Context, *llm.CompletionRequest) (*llm.CompletionResponse, error) {
-	return &llm.CompletionResponse{Content: m.answer}, nil
-}
-func (m *scriptedModel) Chat(context.Context, []llm.Message) (*llm.CompletionResponse, error) {
-	return &llm.CompletionResponse{Content: m.answer}, nil
-}
 func (*scriptedModel) Provider() constants.Provider { return constants.ProviderCustom }
-func (*scriptedModel) IsAvailable() bool            { return true }
 func (m *scriptedModel) CompleteStream(context.Context, *llm.CompletionRequest) (<-chan *llm.StreamChunk, error) {
-	return closedStream(m.answer), nil
-}
-func (m *scriptedModel) ChatStream(context.Context, []llm.Message) (<-chan *llm.StreamChunk, error) {
 	return closedStream(m.answer), nil
 }
 

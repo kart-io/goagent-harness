@@ -2,6 +2,7 @@
 
 ## 未发布
 
+- 变更：`compaction` 的摘要请求改用 `llm.Chat(ctx, model, msgs)`，经模型的 `CompleteStream` 收集完整回答。需要 GoAgent 收敛后的 `llm.Client`（只有 `CompleteStream` 与 `Provider`）；只实现了 `Chat` 的摘要模型改为实现 `CompleteStream`。
 - `loop-detect`（版本 2）：新增相近命令的提醒（`commandRepeats`，默认 6）。DeepSeek 实测中常反复运行同一测试、只换 `-count` 与输出过滤，或用 heredoc 反复重写同一个临时测试文件，每次结果都不同，原有的相同调用统计发现不了，直到用尽 100 次请求。
 - `env-context`（版本 2）：在环境说明中写出命令的沙箱限制：只读或限写、不能联网、native 后端禁用 Unix 域套接字，并说明受限制必然失败的命令不必排查。原先模型会反复排查监听 unix socket 的测试为何失败。
 - 修复 `eval/swebench`：运行时限恰好在模型请求途中到期时，结果被归为 `model_service`、不计入解决率的分母，续跑时还会重做。现在归为 `agent_stopped`。

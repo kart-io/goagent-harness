@@ -34,10 +34,6 @@ func (m *scriptModel) CompleteStream(context.Context, *llm.CompletionRequest) (<
 	return m.stream("x"), nil
 }
 
-func (m *scriptModel) ChatStream(context.Context, []llm.Message) (<-chan *llm.StreamChunk, error) {
-	return m.stream("x"), nil
-}
-
 func (m *scriptModel) CompleteToolsStream(_ context.Context, req *llm.CompletionRequest, _ []interfaces.Tool) (<-chan *llm.StreamChunk, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

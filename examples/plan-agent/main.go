@@ -132,15 +132,19 @@ type summarizer struct {
 	r *record
 }
 
-func (s summarizer) Chat(ctx context.Context, msgs []llm.Message) (*llm.CompletionResponse, error) {
-	resp, err := s.Client.Chat(ctx, msgs)
-	if err == nil {
-		s.r.mu.Lock()
-		s.r.summaries++
-		s.r.mu.Unlock()
-		fmt.Printf("  [压缩] %d 字节的历史 → 摘要 %d 字节\n", len(msgs[1].Content), len(resp.Content))
+func (s summarizer) CompleteStream(ctx context.Context, req *llm.CompletionRequest) (<-chan *llm.StreamChunk, error) {
+	resp, err := llm.Complete(ctx, s.Client, req)
+	if err != nil {
+		return nil, err
 	}
-	return resp, err
+	s.r.mu.Lock()
+	s.r.summaries++
+	s.r.mu.Unlock()
+	fmt.Printf("  [压缩] %d 字节的历史 → 摘要 %d 字节\n", len(req.Messages[1].Content), len(resp.Content))
+	stream := make(chan *llm.StreamChunk, 1)
+	stream <- &llm.StreamChunk{Content: resp.Content, FinishReason: resp.FinishReason, Done: true}
+	close(stream)
+	return stream, nil
 }
 
 func run(apiKey string) error {
