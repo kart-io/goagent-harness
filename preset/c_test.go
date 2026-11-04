@@ -35,7 +35,7 @@ func call(id, name, args string) scriptTurn {
 	return scriptTurn{chunk: &llm.StreamChunk{Done: true, FinishReason: "tool_calls", ToolCalls: []llm.ToolCall{tc}}}
 }
 
-// scriptModel 按顺序给出回合并记录每次请求的消息；Chat 用于摘要，记录输入并返回 summary。
+// scriptModel 按顺序给出工具回合；CompleteStream 用于摘要，记录输入并流式返回 summary。
 type scriptModel struct {
 	mu       sync.Mutex
 	turns    []scriptTurn
@@ -47,17 +47,17 @@ type scriptModel struct {
 func (m *scriptModel) Complete(context.Context, *llm.CompletionRequest) (*llm.CompletionResponse, error) {
 	return nil, errors.New("unused")
 }
-func (m *scriptModel) Chat(_ context.Context, msgs []llm.Message) (*llm.CompletionResponse, error) {
+func (m *scriptModel) CompleteStream(_ context.Context, req *llm.CompletionRequest) (<-chan *llm.StreamChunk, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.chats = append(m.chats, msgs)
-	return &llm.CompletionResponse{Content: m.summary}, nil
+	m.chats = append(m.chats, slices.Clone(req.Messages))
+	ch := make(chan *llm.StreamChunk, 1)
+	ch <- &llm.StreamChunk{Delta: m.summary, Done: true, FinishReason: "stop"}
+	close(ch)
+	return ch, nil
 }
 func (*scriptModel) Provider() constants.Provider { return constants.ProviderCustom }
 func (*scriptModel) IsAvailable() bool            { return true }
-func (m *scriptModel) CompleteStream(context.Context, *llm.CompletionRequest) (<-chan *llm.StreamChunk, error) {
-	return nil, errors.New("unused")
-}
 func (m *scriptModel) ChatStream(context.Context, []llm.Message) (<-chan *llm.StreamChunk, error) {
 	return nil, errors.New("unused")
 }

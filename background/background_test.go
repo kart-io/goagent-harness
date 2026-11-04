@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -336,7 +337,10 @@ func mustGet(t *testing.T, m *Manager, id string) Record {
 func TestTurnStartedClearsWaitLimit(t *testing.T) {
 	entered := make(chan struct{}, 1)
 	cfg := testConfig(newStore(t, t.TempDir()), (&notices{}).add)
-	cfg.MaxWait = 40 * time.Millisecond
+	var clock atomic.Int64
+	clock.Store(time.Now().UnixNano())
+	cfg.Now = func() time.Time { return time.Unix(0, clock.Load()) }
+	cfg.MaxWait = time.Minute
 	m := newManager(t, cfg, blocking(entered))
 	runManager(t, m)
 	ctx := context.Background()
@@ -347,7 +351,8 @@ func TestTurnStartedClearsWaitLimit(t *testing.T) {
 	require.False(t, mustGet(t, m, "c1").WaitUntil.IsZero())
 	require.NoError(t, m.TurnStarted(ctx, "o"))
 	require.True(t, mustGet(t, m, "c1").WaitUntil.IsZero())
-	time.Sleep(80 * time.Millisecond)
+	clock.Add(int64(2 * time.Minute))
+	require.NoError(t, m.expire(ctx))
 	require.Equal(t, StatusRunning, mustGet(t, m, "c1").Status)
 }
 
@@ -618,4 +623,43 @@ func TestSlotsReserveCapacityForPeople(t *testing.T) {
 	require.Equal(t, "launch", <-order)
 	release()
 	require.Equal(t, 0, slots.Used(), "重复释放被忽略")
+}
+
+// Pause expiry immediately before its state transaction. A turn can clear the
+// deadline after the initial scan; expiry must recheck the committed record.
+type expiryLockKey struct{}
+type pausedExpiryStore struct {
+	durable.Store
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *pausedExpiryStore) Lock(ctx context.Context, id string) (func() error, error) {
+	if ctx.Value(expiryLockKey{}) != nil {
+		s.once.Do(func() { close(s.entered); <-s.release })
+	}
+	return s.Store.Lock(ctx, id)
+}
+
+func TestExpireRechecksDeadlineAfterTurnStarted(t *testing.T) {
+	ctx := context.Background()
+	store := &pausedExpiryStore{Store: newStore(t, t.TempDir()), entered: make(chan struct{}), release: make(chan struct{})}
+	m := newManager(t, testConfig(store, (&notices{}).add), nil)
+	require.NoError(t, m.update(ctx, func(state *managerState) ([]effects.Effect, error) {
+		state.Records = append(state.Records, Record{Task: bg("c1"), Status: StatusRunning, WaitUntil: time.Now().Add(-time.Hour)})
+		return nil, nil
+	}))
+	done := make(chan error, 1)
+	go func() { done <- m.expire(context.WithValue(ctx, expiryLockKey{}, true)) }()
+	<-store.entered
+	require.NoError(t, m.TurnStarted(ctx, "o"))
+	close(store.release)
+	require.NoError(t, <-done)
+	record := mustGet(t, m, "c1")
+	require.Equal(t, StatusRunning, record.Status)
+	require.True(t, record.WaitUntil.IsZero())
+	records, err := m.queue.Records(ctx)
+	require.NoError(t, err)
+	require.Empty(t, records, "cleared deadlines must not emit termination notices")
 }

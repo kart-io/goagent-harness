@@ -132,15 +132,57 @@ type summarizer struct {
 	r *record
 }
 
-func (s summarizer) Chat(ctx context.Context, msgs []llm.Message) (*llm.CompletionResponse, error) {
-	resp, err := s.Client.Chat(ctx, msgs)
-	if err == nil {
-		s.r.mu.Lock()
-		s.r.summaries++
-		s.r.mu.Unlock()
-		fmt.Printf("  [压缩] %d 字节的历史 → 摘要 %d 字节\n", len(msgs[1].Content), len(resp.Content))
+func (s summarizer) CompleteStream(ctx context.Context, req *llm.CompletionRequest) (<-chan *llm.StreamChunk, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	stream, err := s.Client.CompleteStream(ctx, req)
+	if err != nil {
+		cancel()
+		return nil, err
 	}
-	return resp, err
+	out := make(chan *llm.StreamChunk)
+	go func() {
+		defer close(out)
+		defer cancel()
+		var deltas strings.Builder
+		for {
+			var chunk *llm.StreamChunk
+			select {
+			case <-ctx.Done():
+				return
+			case next, open := <-stream:
+				if !open {
+					return
+				}
+				chunk = next
+			}
+			if chunk != nil {
+				deltas.WriteString(chunk.Delta)
+				if chunk.Done && chunk.Error == nil {
+					s.r.mu.Lock()
+					s.r.summaries++
+					s.r.mu.Unlock()
+					content := chunk.Content
+					if content == "" {
+						content = deltas.String()
+					}
+					historyBytes := 0
+					if req != nil && len(req.Messages) > 1 {
+						historyBytes = len(req.Messages[1].Content)
+					}
+					fmt.Printf("  [压缩] %d 字节的历史 → 摘要 %d 字节\n", historyBytes, len(content))
+				}
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case out <- chunk:
+			}
+			if chunk != nil && (chunk.Done || chunk.Error != nil) {
+				return
+			}
+		}
+	}()
+	return out, nil
 }
 
 func run(apiKey string) error {

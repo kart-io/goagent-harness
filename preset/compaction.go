@@ -125,7 +125,7 @@ func (cp *compactor) compact(ctx context.Context, messages []llm.Message, inputs
 	if cut <= head {
 		return messages, false, nil
 	}
-	resp, err := cp.model.Chat(ctx, []llm.Message{
+	resp, err := llm.Chat(ctx, cp.model, []llm.Message{
 		llm.SystemMessage(strings.TrimSpace(compactionPrompt + "\n" + cp.cfg.Instructions)),
 		llm.UserMessage(renderTranscript(messages[head:cut])),
 	})

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -291,26 +292,36 @@ func TestEnqueueWhileRunningQueuesBehind(t *testing.T) {
 func TestTargetOrderHoldsUntilRepeatedFailure(t *testing.T) {
 	ctx := context.Background()
 	var c counter
-	failures := 0
-	var mu sync.Mutex
-	queue := newQueue(t, testConfig(newStore(t, t.TempDir()), map[string]Kind{"send": {Run: func(ctx context.Context, e Effect) error {
+	var clock atomic.Int64
+	clock.Store(time.Now().UnixNano())
+	cfg := testConfig(newStore(t, t.TempDir()), map[string]Kind{"send": {Run: func(ctx context.Context, e Effect) error {
 		if e.Key == "first" {
-			mu.Lock()
-			defer mu.Unlock()
-			failures++
 			return errors.New("target down")
 		}
 		return c.run(ctx, e)
-	}}}))
+	}}})
+	cfg.Now = func() time.Time { return time.Unix(0, clock.Load()) }
+	queue := newQueue(t, cfg)
 	require.NoError(t, queue.Enqueue(ctx, effect("send", "first", "t"), effect("send", "second", "t"), effect("send", "other", "u")))
 	start(t, queue)
 	waitState(t, queue, "other", StateDone) // 其他目标不等待。
+	for failures := 1; failures <= DefaultHoldAfter; failures++ {
+		require.Eventually(t, func() bool {
+			first := recordOf(t, queue, "first")
+			return first.State == StateWaiting && first.Failures == failures
+		}, 5*time.Second, 2*time.Millisecond)
+		if failures < DefaultHoldAfter {
+			require.Equal(t, StateWaiting, recordOf(t, queue, "second").State,
+				"前面的待办连续失败到阈值前不能放行")
+			require.Zero(t, c.count("second"))
+			// Advance only after the previous failure is durably settled.
+			clock.Store(recordOf(t, queue, "first").NextAt.UnixNano())
+		}
+	}
 	waitState(t, queue, "second", StateDone)
-	mu.Lock()
-	defer mu.Unlock()
-	require.GreaterOrEqual(t, failures, DefaultHoldAfter, "前面的待办连续失败到阈值后才放行")
 	first := recordOf(t, queue, "first")
 	require.Equal(t, StateWaiting, first.State)
+	require.Equal(t, DefaultHoldAfter, first.Failures)
 	require.Equal(t, "execution", first.FailureKind)
 	require.NotContains(t, string(mustJSON(t, first)), "target down", "不保存第三方错误文本")
 	problems, err := queue.Problems(ctx)
@@ -445,23 +456,28 @@ func TestOnlyOneRunnerAtATime(t *testing.T) {
 
 // 目标持续返回结果未知时按失败退避，不会空转。
 func TestRepeatedUnconfirmedBacksOff(t *testing.T) {
-	var mu sync.Mutex
-	calls := 0
+	var clock atomic.Int64
+	clock.Store(time.Now().UnixNano())
 	cfg := testConfig(newStore(t, t.TempDir()), map[string]Kind{"send": {Idempotent: true, Run: func(context.Context, Effect) error {
-		mu.Lock()
-		defer mu.Unlock()
-		calls++
 		return ErrUnconfirmed
 	}}})
-	cfg.MinBackoff, cfg.MaxBackoff = 50*time.Millisecond, 50*time.Millisecond
+	cfg.Now = func() time.Time { return time.Unix(0, clock.Load()) }
+	cfg.MinBackoff, cfg.MaxBackoff = 50*time.Millisecond, 100*time.Millisecond
 	queue := newQueue(t, cfg)
 	require.NoError(t, queue.Enqueue(context.Background(), effect("send", "a", "")))
 	start(t, queue)
-	time.Sleep(220 * time.Millisecond)
-	mu.Lock()
-	defer mu.Unlock()
-	require.GreaterOrEqual(t, calls, 2)
-	require.LessOrEqual(t, calls, 6)
+	for failures, backoff := range []time.Duration{50 * time.Millisecond, 100 * time.Millisecond, 100 * time.Millisecond} {
+		require.Eventually(t, func() bool {
+			r := recordOf(t, queue, "a")
+			return r.State == StateWaiting && r.Failures == failures+1
+		}, 5*time.Second, 2*time.Millisecond)
+		r := recordOf(t, queue, "a")
+		require.Equal(t, failures+1, r.Attempts)
+		require.Equal(t, time.Unix(0, clock.Load()).Add(backoff), r.NextAt)
+		if failures < 2 {
+			clock.Store(r.NextAt.UnixNano())
+		}
+	}
 }
 
 func TestPanicIsRecordedAsFailure(t *testing.T) {
