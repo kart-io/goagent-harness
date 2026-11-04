@@ -13,21 +13,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// chatModel 只实现摘要用的 Chat，按 err 返回失败。
+// chatModel 只实现摘要用的 CompleteStream，按 err 返回失败。
 type chatModel struct {
 	scriptModel
 	err   error
 	usage *interfaces.TokenUsage
 }
 
-func (m *chatModel) Chat(ctx context.Context, msgs []llm.Message) (*llm.CompletionResponse, error) {
+func (m *chatModel) CompleteStream(_ context.Context, req *llm.CompletionRequest) (<-chan *llm.StreamChunk, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.chats = append(m.chats, msgs)
+	m.chats = append(m.chats, req.Messages)
 	if m.err != nil {
 		return nil, m.err
 	}
-	return &llm.CompletionResponse{Content: "摘要", Usage: m.usage}, nil
+	return summaryStream("摘要", m.usage), nil
 }
 
 // 一段会被压缩的对话：最后两条是保留区。

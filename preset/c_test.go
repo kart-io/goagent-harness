@@ -44,22 +44,26 @@ type scriptModel struct {
 	chats    [][]llm.Message
 }
 
-func (m *scriptModel) Complete(context.Context, *llm.CompletionRequest) (*llm.CompletionResponse, error) {
-	return nil, errors.New("unused")
-}
-func (m *scriptModel) Chat(_ context.Context, msgs []llm.Message) (*llm.CompletionResponse, error) {
+func (*scriptModel) Provider() constants.Provider { return constants.ProviderCustom }
+
+// CompleteStream 只用于压缩摘要请求；Agent 回合走 CompleteToolsStream。
+func (m *scriptModel) CompleteStream(_ context.Context, req *llm.CompletionRequest) (<-chan *llm.StreamChunk, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.chats = append(m.chats, msgs)
-	return &llm.CompletionResponse{Content: m.summary}, nil
+	m.chats = append(m.chats, req.Messages)
+	return summaryStream(m.summary, nil), nil
 }
-func (*scriptModel) Provider() constants.Provider { return constants.ProviderCustom }
-func (*scriptModel) IsAvailable() bool            { return true }
-func (m *scriptModel) CompleteStream(context.Context, *llm.CompletionRequest) (<-chan *llm.StreamChunk, error) {
-	return nil, errors.New("unused")
-}
-func (m *scriptModel) ChatStream(context.Context, []llm.Message) (<-chan *llm.StreamChunk, error) {
-	return nil, errors.New("unused")
+
+// summaryStream 以一个成功终止块返回摘要。
+func summaryStream(content string, tokens *interfaces.TokenUsage) <-chan *llm.StreamChunk {
+	chunk := &llm.StreamChunk{Content: content, FinishReason: "stop", Done: true}
+	if tokens != nil {
+		chunk.Usage = &llm.Usage{PromptTokens: tokens.PromptTokens, CompletionTokens: tokens.CompletionTokens, TotalTokens: tokens.TotalTokens, CachedTokens: tokens.CachedTokens, ReasoningTokens: tokens.ReasoningTokens}
+	}
+	ch := make(chan *llm.StreamChunk, 1)
+	ch <- chunk
+	close(ch)
+	return ch
 }
 func (m *scriptModel) CompleteToolsStream(_ context.Context, req *llm.CompletionRequest, _ []interfaces.Tool) (<-chan *llm.StreamChunk, error) {
 	m.mu.Lock()

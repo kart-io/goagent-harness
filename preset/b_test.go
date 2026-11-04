@@ -319,14 +319,7 @@ func TestSubagentStructure(t *testing.T) {
 // finalModel 不调用工具，直接给出答复。
 type finalModel struct{ answer string }
 
-func (m finalModel) Complete(context.Context, *llm.CompletionRequest) (*llm.CompletionResponse, error) {
-	return &llm.CompletionResponse{Content: m.answer}, nil
-}
-func (m finalModel) Chat(context.Context, []llm.Message) (*llm.CompletionResponse, error) {
-	return &llm.CompletionResponse{Content: m.answer}, nil
-}
 func (finalModel) Provider() constants.Provider { return constants.ProviderCustom }
-func (finalModel) IsAvailable() bool            { return true }
 func (m finalModel) stream() <-chan *llm.StreamChunk {
 	ch := make(chan *llm.StreamChunk, 2)
 	ch <- &llm.StreamChunk{Delta: m.answer}
@@ -335,9 +328,6 @@ func (m finalModel) stream() <-chan *llm.StreamChunk {
 	return ch
 }
 func (m finalModel) CompleteStream(context.Context, *llm.CompletionRequest) (<-chan *llm.StreamChunk, error) {
-	return m.stream(), nil
-}
-func (m finalModel) ChatStream(context.Context, []llm.Message) (<-chan *llm.StreamChunk, error) {
 	return m.stream(), nil
 }
 func (m finalModel) CompleteToolsStream(context.Context, *llm.CompletionRequest, []interfaces.Tool) (<-chan *llm.StreamChunk, error) {

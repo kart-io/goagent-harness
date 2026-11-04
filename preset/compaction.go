@@ -266,7 +266,7 @@ func (cp *compactor) chat(ctx context.Context, msgs []llm.Message) (string, erro
 			return "", err
 		}
 	}
-	resp, err := cp.model.Chat(ctx, msgs)
+	resp, err := llm.Chat(ctx, cp.model, msgs)
 	if metered {
 		var u *interfaces.TokenUsage
 		if resp != nil {
