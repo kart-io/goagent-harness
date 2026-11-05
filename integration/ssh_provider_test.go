@@ -58,13 +58,21 @@ func sshBuildRunner(t *testing.T, dir string) (string, string) {
 	t.Helper()
 	runner := filepath.Join(dir, "sandbox-runner")
 	build := exec.Command("go", "build", "-o", runner, "github.com/kart-io/goagent-harness/cmd/sandbox-runner")
-	build.Env = append(os.Environ(), "CGO_ENABLED=0")
+	// 容器与 SSH 隔离后端运行 Linux runner，构建目标不能跟随 macOS/Windows 宿主。
+	build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux")
 	out, err := build.CombinedOutput()
 	require.NoError(t, err, string(out))
 	data, err := os.ReadFile(runner)
 	require.NoError(t, err)
 	digest := sha256.Sum256(data)
 	return runner, hex.EncodeToString(digest[:])
+}
+
+func TestSSHRunnerTargetsLinux(t *testing.T) {
+	runner, _ := sshBuildRunner(t, t.TempDir())
+	data, err := os.ReadFile(runner)
+	require.NoError(t, err)
+	require.True(t, bytes.HasPrefix(data, []byte{0x7f, 'E', 'L', 'F'}), "SSH runner 必须是目标 Linux 环境可执行的 ELF，不能随宿主生成 Darwin/Windows 二进制")
 }
 
 func startExternalSSH(t *testing.T, addr string) *sshFixture {
@@ -635,11 +643,13 @@ func TestSSHLostCreateResponseDoesNotLeak(t *testing.T) {
 	faults := &sandboxtest.Faults{Provider: f.provider(t)}
 	faults.LoseCreateResponse.Store(1)
 	var ran atomic.Bool
-	rig := startRig(t, rigConfig{dir: t.TempDir(), namespace: "ssh", provider: faults,
+	rig := startRig(t, rigConfig{
+		dir: t.TempDir(), namespace: "ssh", provider: faults,
 		run: func(context.Context, *preset.Assembly, string) (string, error) {
 			ran.Store(true)
 			return "", nil
-		}})
+		},
+	})
 	rig.spawn("child", "任务")
 	rig.wait("child", background.StatusFailed)
 	require.False(t, ran.Load())

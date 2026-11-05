@@ -2,6 +2,7 @@
 
 ## 未发布
 
+- 修复 SSH 集成测试的 runner 构建目标：显式构建 Linux 静态二进制，避免 macOS/Windows 宿主生成的程序在 Linux 测试容器中报 `Exec format error`；增加不依赖 Docker 的 ELF 目标回归。
 - 变更：`compaction` 的摘要请求改用 `llm.Chat(ctx, model, msgs)`，经模型的 `CompleteStream` 收集完整回答。需要 GoAgent 收敛后的 `llm.Client`（只有 `CompleteStream` 与 `Provider`）；只实现了 `Chat` 的摘要模型改为实现 `CompleteStream`。
 - `loop-detect`（版本 2）：新增相近命令的提醒（`commandRepeats`，默认 6）。DeepSeek 实测中常反复运行同一测试、只换 `-count` 与输出过滤，或用 heredoc 反复重写同一个临时测试文件，每次结果都不同，原有的相同调用统计发现不了，直到用尽 100 次请求。
 - `env-context`（版本 2）：在环境说明中写出命令的沙箱限制：只读或限写、不能联网、native 后端禁用 Unix 域套接字，并说明受限制必然失败的命令不必排查。原先模型会反复排查监听 unix socket 的测试为何失败。
