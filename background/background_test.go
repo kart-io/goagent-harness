@@ -13,6 +13,7 @@ import (
 
 	"github.com/kart-io/goagent-harness/effects"
 	"github.com/kart-io/goagent/core/durable"
+	agentErrors "github.com/kart-io/goagent/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -502,7 +503,7 @@ type leaseLost struct {
 
 func (s leaseLost) SaveAll(ctx context.Context, writes ...durable.Write) error {
 	if s.lost() {
-		return durable.ErrLeaseLost
+		return agentErrors.ErrLeaseLost
 	}
 	return s.Store.SaveAll(ctx, writes...)
 }
@@ -533,10 +534,10 @@ func TestLeaseLostStopsManagerAndChildren(t *testing.T) {
 	lost.Lock()
 	isLost = true
 	lost.Unlock()
-	require.ErrorIs(t, m.TurnEnded(context.Background(), "o"), durable.ErrLeaseLost)
+	require.ErrorIs(t, m.TurnEnded(context.Background(), "o"), agentErrors.ErrLeaseLost)
 	select {
 	case err := <-done:
-		require.ErrorIs(t, err, durable.ErrLeaseLost)
+		require.ErrorIs(t, err, agentErrors.ErrLeaseLost)
 	case <-time.After(5 * time.Second):
 		t.Fatal("Manager 没有停止")
 	}

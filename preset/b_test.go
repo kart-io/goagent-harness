@@ -12,7 +12,8 @@ import (
 
 	"github.com/kart-io/goagent/interfaces"
 	"github.com/kart-io/goagent/llm"
-	"github.com/kart-io/goagent/llm/constants"
+
+	shared "github.com/kart-io/goagent/constants"
 	"github.com/kart-io/goagent/tools"
 	"github.com/stretchr/testify/require"
 )
@@ -319,7 +320,7 @@ func TestSubagentStructure(t *testing.T) {
 // finalModel 不调用工具，直接给出答复。
 type finalModel struct{ answer string }
 
-func (finalModel) Provider() constants.Provider { return constants.ProviderCustom }
+func (finalModel) Provider() shared.Provider { return shared.ProviderCustom }
 func (m finalModel) stream() <-chan *llm.StreamChunk {
 	ch := make(chan *llm.StreamChunk, 2)
 	ch <- &llm.StreamChunk{Delta: m.answer}

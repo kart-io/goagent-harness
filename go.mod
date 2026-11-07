@@ -1,10 +1,10 @@
 module github.com/kart-io/goagent-harness
 
-go 1.26.0
+go 1.27.0
 
 require (
 	github.com/google/uuid v1.6.0
-	github.com/kart-io/goagent v0.47.0
+	github.com/kart-io/goagent v0.49.3-0.20261107151110-dae60f4779d4
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/stretchr/testify v1.12.1
 	golang.org/x/crypto v0.58.0

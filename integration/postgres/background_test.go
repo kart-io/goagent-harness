@@ -18,6 +18,7 @@ import (
 	"github.com/kart-io/goagent-harness/background"
 	"github.com/kart-io/goagent-harness/effects"
 	"github.com/kart-io/goagent/core/durable"
+	agentErrors "github.com/kart-io/goagent/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -203,7 +204,7 @@ func TestTakeoverFencesOldHolder(t *testing.T) {
 	close(finish)
 	select {
 	case err := <-done1:
-		require.True(t, err == nil || errors.Is(err, durable.ErrLeaseLost), "%v", err)
+		require.True(t, err == nil || errors.Is(err, agentErrors.ErrLeaseLost), "%v", err)
 	case <-time.After(15 * time.Second):
 		stop1()
 		<-done1

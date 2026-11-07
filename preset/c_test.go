@@ -14,7 +14,8 @@ import (
 	"github.com/kart-io/goagent/builder"
 	"github.com/kart-io/goagent/interfaces"
 	"github.com/kart-io/goagent/llm"
-	"github.com/kart-io/goagent/llm/constants"
+
+	shared "github.com/kart-io/goagent/constants"
 	"github.com/kart-io/goagent/tools"
 	"github.com/stretchr/testify/require"
 )
@@ -44,7 +45,7 @@ type scriptModel struct {
 	chats    [][]llm.Message
 }
 
-func (*scriptModel) Provider() constants.Provider { return constants.ProviderCustom }
+func (*scriptModel) Provider() shared.Provider { return shared.ProviderCustom }
 
 // CompleteStream 只用于压缩摘要请求；Agent 回合走 CompleteToolsStream。
 func (m *scriptModel) CompleteStream(_ context.Context, req *llm.CompletionRequest) (<-chan *llm.StreamChunk, error) {

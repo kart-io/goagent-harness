@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kart-io/goagent/core/durable"
+	agentErrors "github.com/kart-io/goagent/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -434,10 +435,10 @@ func TestLeaseLostStopsRunner(t *testing.T) {
 	ctx := context.Background()
 	store := newStore(t, t.TempDir())
 	var c counter
-	queue := newQueue(t, testConfig(failSaveAll{Store: store, err: durable.ErrLeaseLost}, map[string]Kind{"send": {Run: c.run}}))
+	queue := newQueue(t, testConfig(failSaveAll{Store: store, err: agentErrors.ErrLeaseLost}, map[string]Kind{"send": {Run: c.run}}))
 	seeded := newQueue(t, testConfig(store, map[string]Kind{"send": {Run: c.run}}))
 	require.NoError(t, seeded.Enqueue(ctx, effect("send", "a", "")))
-	require.ErrorIs(t, queue.Run(ctx), durable.ErrLeaseLost)
+	require.ErrorIs(t, queue.Run(ctx), agentErrors.ErrLeaseLost)
 	require.Zero(t, c.count("a"), "认领没有落盘时不执行")
 }
 
@@ -450,7 +451,7 @@ func TestOnlyOneRunnerAtATime(t *testing.T) {
 	waitState(t, first, "a", StateDone)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
 	defer cancel()
-	require.ErrorIs(t, newQueue(t, testConfig(store, kinds)).Run(ctx), durable.ErrLockUnavailable)
+	require.ErrorIs(t, newQueue(t, testConfig(store, kinds)).Run(ctx), agentErrors.ErrLockUnavailable)
 	_ = h
 }
 

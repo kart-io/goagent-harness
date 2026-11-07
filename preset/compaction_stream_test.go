@@ -8,7 +8,8 @@ import (
 
 	"github.com/kart-io/goagent/builder"
 	"github.com/kart-io/goagent/llm"
-	"github.com/kart-io/goagent/llm/constants"
+
+	shared "github.com/kart-io/goagent/constants"
 	"github.com/stretchr/testify/require"
 )
 
@@ -18,7 +19,7 @@ type summaryStreamClient func(context.Context, *llm.CompletionRequest) (<-chan *
 func (s summaryStreamClient) CompleteStream(ctx context.Context, req *llm.CompletionRequest) (<-chan *llm.StreamChunk, error) {
 	return s(ctx, req)
 }
-func (summaryStreamClient) Provider() constants.Provider { return constants.ProviderCustom }
+func (summaryStreamClient) Provider() shared.Provider { return shared.ProviderCustom }
 
 func TestCompactionCollectsSummaryStream(t *testing.T) {
 	var streamCtx context.Context

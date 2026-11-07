@@ -9,6 +9,7 @@ import (
 	"github.com/kart-io/goagent-harness/preset"
 	"github.com/kart-io/goagent-harness/sandbox"
 	"github.com/kart-io/goagent/core/durable"
+	agentErrors "github.com/kart-io/goagent/errors"
 	"github.com/kart-io/goagent/harness/env"
 	"github.com/kart-io/goagent/interfaces"
 	"github.com/kart-io/goagent/tools"
@@ -126,7 +127,7 @@ func TestManagedCommandUnconfirmedIsNotDurablyReexecuted(t *testing.T) {
 			ctx = durable.WithJournal(durable.WithExecutionKey(context.Background(), "managed-node"), store)
 			out, err = asm.Dispatcher.Invoke(ctx, req)
 			require.EqualValues(t, 1, count.Load(), "an unconfirmed effect must not execute again")
-			require.ErrorIs(t, err, durable.ErrOperationAttention)
+			require.ErrorIs(t, err, agentErrors.ErrOperationAttention)
 			require.False(t, out != nil && out.Success)
 			require.False(t, errors.Is(err, context.DeadlineExceeded), "recovery needs host attention, not a confirmed timeout")
 		})

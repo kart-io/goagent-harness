@@ -14,6 +14,7 @@ import (
 	"github.com/kart-io/goagent-harness/tools/coding"
 	"github.com/kart-io/goagent/builder"
 	"github.com/kart-io/goagent/core/budget"
+	agentErrors "github.com/kart-io/goagent/errors"
 	"github.com/kart-io/goagent/interfaces"
 	"github.com/kart-io/goagent/llm"
 )
@@ -220,7 +221,7 @@ func (cp *compactor) compactKeeping(ctx context.Context, messages []llm.Message,
 	}
 	summary, err := cp.summarize(ctx, span)
 	if err != nil {
-		if ctx.Err() != nil || errors.Is(err, budget.ErrBudgetExceeded) {
+		if ctx.Err() != nil || errors.Is(err, agentErrors.ErrModelBudgetExceeded) {
 			return nil, false, err
 		}
 		summary = fallbackSummary(span, err)

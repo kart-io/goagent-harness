@@ -18,6 +18,7 @@ import (
 	"github.com/kart-io/goagent-harness/effects"
 	"github.com/kart-io/goagent/core/budget"
 	"github.com/kart-io/goagent/core/durable"
+	agentErrors "github.com/kart-io/goagent/errors"
 )
 
 const (
@@ -291,7 +292,7 @@ func (m *Manager) update(ctx context.Context, change func(*managerState) ([]effe
 		{ID: m.docID, Snapshot: &durable.Snapshot{RunID: m.docID, Version: stateVersion, Data: data}},
 		{ID: m.runnerID, Snapshot: &durable.Snapshot{RunID: m.runnerID, Version: stateVersion, Data: json.RawMessage(`{}`)}},
 	}, notices...)
-	if errors.Is(err, durable.ErrLeaseLost) {
+	if errors.Is(err, agentErrors.ErrLeaseLost) {
 		m.abort(err)
 	}
 	return err
@@ -344,7 +345,7 @@ func (m *Manager) Run(ctx context.Context) (err error) {
 	go func() {
 		queueErr := m.queue.Run(runCtx)
 		// 通知队列失去控制权时整个 Manager 一起停止。
-		if errors.Is(queueErr, durable.ErrLeaseLost) {
+		if errors.Is(queueErr, agentErrors.ErrLeaseLost) {
 			fail(queueErr)
 		}
 		queueDone <- queueErr
@@ -369,7 +370,7 @@ func (m *Manager) Run(ctx context.Context) (err error) {
 			return causeOf(ctx, runCtx)
 		case <-ticker.C:
 			if err := m.expire(runCtx); err != nil {
-				if errors.Is(err, durable.ErrLeaseLost) {
+				if errors.Is(err, agentErrors.ErrLeaseLost) {
 					return err
 				}
 				if runCtx.Err() != nil {
@@ -624,7 +625,7 @@ func (m *Manager) finishIfOwned(runCtx, ctx context.Context, task Task, result s
 			status = StatusCanceled
 		case errors.Is(runErr, errPanic):
 			status, kind = StatusFailed, "panic"
-		case errors.Is(runErr, durable.ErrOperationAttention):
+		case errors.Is(runErr, agentErrors.ErrOperationAttention):
 			status, kind = StatusFailed, "attention"
 		case durable.Waits(runErr) != nil:
 			// 等待没有定位信息，宿主无法提供续跑输入。

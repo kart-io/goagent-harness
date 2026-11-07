@@ -14,7 +14,7 @@ import (
 	"github.com/kart-io/goagent-harness/effects"
 	"github.com/kart-io/goagent-harness/sandbox"
 	"github.com/kart-io/goagent/builder"
-	"github.com/kart-io/goagent/core/budget"
+
 	"github.com/kart-io/goagent/core/durable"
 	agentErrors "github.com/kart-io/goagent/errors"
 	"github.com/kart-io/goagent/interfaces"
@@ -273,7 +273,7 @@ func (t *subagentTool) Invoke(ctx context.Context, input *interfaces.ToolInput) 
 // 等待审批（须穿透到外层）与 panic 仍中止父 Agent。
 func childFailureRecoverable(ctx context.Context, err error) bool {
 	var panicErr *agentErrors.PanicError
-	return ctx.Err() == nil && durable.Waits(err) == nil && !errors.Is(err, budget.ErrBudgetExceeded) && !errors.As(err, &panicErr)
+	return ctx.Err() == nil && durable.Waits(err) == nil && !errors.Is(err, agentErrors.ErrModelBudgetExceeded) && !errors.As(err, &panicErr)
 }
 
 func (t *subagentTool) ownerOf(ctx context.Context) string {

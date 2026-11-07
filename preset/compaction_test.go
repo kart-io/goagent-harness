@@ -8,6 +8,7 @@ import (
 
 	"github.com/kart-io/goagent-harness/tools/coding"
 	"github.com/kart-io/goagent/core/budget"
+	agentErrors "github.com/kart-io/goagent/errors"
 	"github.com/kart-io/goagent/interfaces"
 	"github.com/kart-io/goagent/llm"
 	"github.com/stretchr/testify/require"
@@ -139,7 +140,7 @@ func TestCompactionChargesRootBudget(t *testing.T) {
 	require.Equal(t, 15, snap.KnownTokens.TotalTokens)
 
 	_, _, err = cp.compact(ctx, compactable(llm.UserMessage("任务")), 1)
-	require.ErrorIs(t, err, budget.ErrBudgetExceeded, "an exhausted budget stops the run instead of degrading")
+	require.ErrorIs(t, err, agentErrors.ErrModelBudgetExceeded, "an exhausted budget stops the run instead of degrading")
 	require.Len(t, model.chats, 1, "no request is sent without budget")
 }
 

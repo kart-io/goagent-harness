@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kart-io/goagent/core/budget"
+	agentErrors "github.com/kart-io/goagent/errors"
 	"github.com/kart-io/goagent/interfaces"
 	"github.com/kart-io/goagent/tools"
 )
@@ -34,7 +34,7 @@ func TestSubagentFatalFailuresStillAbort(t *testing.T) {
 		ctx context.Context
 		err error
 	}{
-		"budget":   {context.Background(), budget.ErrBudgetExceeded},
+		"budget":   {context.Background(), agentErrors.ErrModelBudgetExceeded},
 		"canceled": {canceled, context.Canceled},
 	}
 	for name, c := range cases {

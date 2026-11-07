@@ -8,7 +8,8 @@ import (
 	"time"
 
 	"github.com/kart-io/goagent/llm"
-	"github.com/kart-io/goagent/llm/constants"
+
+	shared "github.com/kart-io/goagent/constants"
 	"github.com/stretchr/testify/require"
 )
 
@@ -17,7 +18,7 @@ type summaryClient func(context.Context, *llm.CompletionRequest) (<-chan *llm.St
 func (s summaryClient) CompleteStream(ctx context.Context, req *llm.CompletionRequest) (<-chan *llm.StreamChunk, error) {
 	return s(ctx, req)
 }
-func (summaryClient) Provider() constants.Provider { return constants.ProviderCustom }
+func (summaryClient) Provider() shared.Provider { return shared.ProviderCustom }
 
 func TestSummarizerObservesSuccessfulTerminalOnly(t *testing.T) {
 	sentinel := errors.New("summary failed")

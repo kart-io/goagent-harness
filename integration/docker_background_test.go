@@ -21,7 +21,8 @@ import (
 	"github.com/kart-io/goagent/harness/env"
 	"github.com/kart-io/goagent/interfaces"
 	"github.com/kart-io/goagent/llm"
-	"github.com/kart-io/goagent/llm/constants"
+
+	shared "github.com/kart-io/goagent/constants"
 	"github.com/stretchr/testify/require"
 )
 
@@ -138,7 +139,7 @@ func (m *scriptedModel) seen() string {
 	return string(raw)
 }
 
-func (*scriptedModel) Provider() constants.Provider { return constants.ProviderCustom }
+func (*scriptedModel) Provider() shared.Provider { return shared.ProviderCustom }
 func (m *scriptedModel) CompleteStream(context.Context, *llm.CompletionRequest) (<-chan *llm.StreamChunk, error) {
 	return closedStream(m.answer), nil
 }

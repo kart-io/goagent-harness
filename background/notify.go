@@ -7,6 +7,7 @@ import (
 
 	"github.com/kart-io/goagent-harness/effects"
 	"github.com/kart-io/goagent/builder"
+	agentErrors "github.com/kart-io/goagent/errors"
 )
 
 // NotifyHandle 返回把通知投递给所有者 Handle 的 Config.Notify。lookup 返回所有者当前的 Handle，没有时返回 nil。
@@ -17,7 +18,7 @@ func NotifyHandle(lookup func(owner string) *builder.Handle, idle func(context.C
 	return func(ctx context.Context, notice Notice) error {
 		if h := lookup(notice.Owner); h != nil {
 			err := h.SteerOnce(notice.Key(), noticeText(notice))
-			if err == nil || !errors.Is(err, builder.ErrHandleDone) {
+			if err == nil || !errors.Is(err, agentErrors.ErrAgentHandleDone) {
 				return err
 			}
 		}
