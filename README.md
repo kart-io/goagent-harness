@@ -6,7 +6,7 @@ GoAgent 提供模型与工具循环、类型化工作流、持久恢复、预算
 
 ## 模块与版本
 
-模块路径：`github.com/kart-io/goagent-harness`；Go 1.26 及以上；GoAgent 基线为 **v0.32.2**。
+模块路径：`github.com/kart-io/goagent-harness`。当前开发版本使用 GoAgent 新增的 Skills API，需要 Go 1.27 和对应的本地 GoAgent checkout；依赖版本与验证方法见下文。
 本仓库由 GoAgent 拆出，源码位于 [kart-io/goagent-harness](https://github.com/kart-io/goagent-harness)，默认分支为 `main`。当前尚未发布版本标签，可克隆仓库运行测试与示例。
 迁移来源与导入路径对照见 [迁移指南](docs/MIGRATION.md) 和 [NOTICE](NOTICE)。
 
@@ -90,20 +90,31 @@ Windows native 与 Landlock 尚未实现。平台验证范围和剩余限制见 
 
 ## 验证
 
+`go.mod` 声明的 GoAgent `v0.49.3-0.20261107151110-dae60f4779d4` 尚不包含新的 Skills API。开发时使用包含 `skills`、`tools/skill` 的本地 GoAgent checkout 和临时 workspace，推荐 Go 1.27.3：
+
 ```bash
-# 仅使用 go.mod 中发布的 GoAgent 版本，不依赖本地源码。
-GOWORK=off go test ./...
-GOWORK=off go build ./...
-
-# 同时验证本地两个项目；参数可指定 GoAgent checkout，默认 ../goagent。
-./scripts/verify-goagent.sh ../goagent
-
-# 可选 Docker 案例，需要本地已有含 sh 的镜像。
-GOAGENT_CODING_DOCKER_IMAGE=alpine:3 go test -run Docker ./tools/coding
+# 在 Bash 中运行；按需将 ../goagent 换为本地 core checkout。
+(
+  set -euo pipefail
+  unset GOROOT
+  harness_root="$PWD"
+  core_root="$(cd ../goagent && pwd -P)"
+  workspace_dir="$(mktemp -d)"
+  trap 'rm -rf "$workspace_dir"' EXIT
+  GOWORK=off go -C "$workspace_dir" work init "$core_root" "$harness_root"
+  export GOWORK="$workspace_dir/go.work"
+  go list -m github.com/kart-io/goagent github.com/kart-io/goagent-harness
+  go test -mod=readonly -race -count=1 ./...
+  go build -mod=readonly ./...
+  go vet -mod=readonly ./...
+)
 ```
 
-脚本临时创建 go.work 并在退出时清理，不修改两个项目的 go.mod 或现有 go.work。
-`make test`、`make race`、`make build` 验证独立模块；`make verify-local` 验证本地组合。
+临时 workspace 在退出时清理，不修改模块依赖或现有 workspace。
+
+可选 Docker 用例需在上述子 shell 内配置镜像及相应用例开关；Postgres 验证位于独立的 `integration/postgres` 模块，不包含在根模块 `./...` 中。
+
+独立发布前，须将 GoAgent 依赖更新为包含新 API 的可获取版本，并通过 `GOWORK=off` 的测试和构建。`make test/race/build` 强制关闭 workspace，`make verify-local` 也先检查版本依赖；依赖更新前使用上面的命令。
 
 ## 能力边界
 

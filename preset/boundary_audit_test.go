@@ -61,7 +61,18 @@ func TestBoundarySkillReferencesStayConfined(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, out.Success)
 	require.Equal(t, "inside", out.Result.(map[string]any)["content"])
-	for _, file := range []string{"outside-link", "../demo/ref.txt", filepath.Join(outside, "secret.txt")} {
+	// Opaque os.Root errors propagate as execution failures rather than being
+	// mislabeled as completed "missing file" rejections; access stays denied.
+	out, err = tool.Invoke(context.Background(), &interfaces.ToolInput{Args: map[string]any{"name": "demo", "file": "outside-link"}})
+	require.Error(t, err)
+	var pathError *os.PathError
+	require.ErrorAs(t, err, &pathError)
+	require.Equal(t, "outside-link", pathError.Path)
+	if out != nil {
+		require.False(t, out.Success)
+		require.Nil(t, out.Result)
+	}
+	for _, file := range []string{"../demo/ref.txt", filepath.Join(outside, "secret.txt")} {
 		out, err = tool.Invoke(context.Background(), &interfaces.ToolInput{Args: map[string]any{"name": "demo", "file": file}})
 		require.NoError(t, err)
 		_, rejected := tools.RejectedResult(out)
