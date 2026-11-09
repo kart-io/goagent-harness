@@ -9,6 +9,7 @@ import (
 
 	"github.com/kart-io/goagent-harness/preset"
 	"github.com/kart-io/goagent/builder"
+	"github.com/kart-io/goagent/constants"
 	"github.com/kart-io/goagent/core/durable"
 	"github.com/kart-io/goagent/interfaces"
 	"github.com/kart-io/goagent/llm"
@@ -86,8 +87,8 @@ presets:
 			in.Result = fmt.Sprint(out.Result)
 			return in, nil
 		}))
-		require.NoError(t, g.AddEdge(workflow.START, "agent"))
-		require.NoError(t, g.AddEdge("agent", workflow.END))
+		require.NoError(t, g.AddEdge(constants.WorkflowStart, "agent"))
+		require.NoError(t, g.AddEdge("agent", constants.WorkflowEnd))
 		store, err := durable.NewFileStore(journal)
 		require.NoError(t, err)
 		d, err := g.CompileDurable(ctx, workflow.DurableConfig{Store: store, Version: "writer-v1", ApprovalNodes: []string{"agent"}})

@@ -10,11 +10,11 @@ import (
 
 	"github.com/kart-io/goagent-harness/tools/coding"
 	"github.com/kart-io/goagent/builder"
+	"github.com/kart-io/goagent/constants"
 	"github.com/kart-io/goagent/interfaces"
 	"github.com/kart-io/goagent/llm"
 	"github.com/kart-io/goagent/tools"
 	"github.com/kart-io/goagent/tools/policy"
-	"github.com/kart-io/goagent/tools/spill"
 )
 
 // ComponentPlanMode 是计划模式组件名。
@@ -41,7 +41,7 @@ type PlanModeConfig struct {
 
 var defaultPlanAllow = []string{
 	coding.ToolReadFile, coding.ToolGlob, coding.ToolGrep, coding.ToolGitStatus, coding.ToolGitDiff, coding.ToolGitLog,
-	coding.ToolTodoWrite, spill.ToolReadSpill, ToolLoadSkill,
+	coding.ToolTodoWrite, constants.ToolReadSpill, ToolLoadSkill,
 }
 
 func init() {

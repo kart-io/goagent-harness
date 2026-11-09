@@ -11,6 +11,7 @@ import (
 
 	"github.com/kart-io/goagent-harness/permissions"
 	"github.com/kart-io/goagent-harness/tools/coding"
+	"github.com/kart-io/goagent/constants"
 	"github.com/kart-io/goagent/interfaces"
 	"github.com/kart-io/goagent/tools/policy"
 	"github.com/kart-io/goagent/tools/spill"
@@ -404,7 +405,7 @@ var spillSpec = Spec[SpillConfig]{
 		_ = store.Prune(c.Retention)
 		a.AddPostHook(store.Hook())
 		a.AddTools(store.ReadTool())
-		a.AddRules([]policy.Rule{{Tool: spill.ToolReadSpill, Decision: policy.Allow}}, nil, false)
+		a.AddRules([]policy.Rule{{Tool: constants.ToolReadSpill, Decision: policy.Allow}}, nil, false)
 		return nil
 	},
 }

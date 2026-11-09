@@ -17,12 +17,12 @@ import (
 	"github.com/kart-io/goagent-harness/permissions"
 	"github.com/kart-io/goagent-harness/sandbox"
 	"github.com/kart-io/goagent-harness/tools/coding"
+	"github.com/kart-io/goagent/constants"
 	"github.com/kart-io/goagent/core/durable"
 	"github.com/kart-io/goagent/interfaces"
 	"github.com/kart-io/goagent/llm"
 	"github.com/kart-io/goagent/tools"
 	"github.com/kart-io/goagent/tools/policy"
-	"github.com/kart-io/goagent/tools/spill"
 )
 
 // Host 是宿主提供给 Build 的环境。模型、SessionID、持久化作用域与预算由宿主在 Builder 上配置。
@@ -437,7 +437,7 @@ func (a *Assembler) publish(cfgs []any) (*Assembly, error) {
 		kept := all[:0:0]
 		for _, t := range all {
 			// 溢出结果须能被读取，read_spill 随 spill 组件保留。
-			if f.Keeps(t.Name()) || t.Name() == spill.ToolReadSpill {
+			if f.Keeps(t.Name()) || t.Name() == constants.ToolReadSpill {
 				kept = append(kept, t)
 				if err := registry.Register(t); err != nil {
 					return nil, err
