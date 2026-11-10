@@ -4,6 +4,8 @@
 
 GoAgent 提供模型与工具循环、类型化工作流、持久恢复、预算、观测和执行环境接口；本项目提供 Preset 装配、编码工具、计划模式、技能、子 Agent 配置、Claude Code 命令钩子与上下文压缩。两个项目单向依赖，不复制执行引擎。
 
+基于 Hermes 全文拆解的[增量设计提案](docs/design/HERMES_ADOPTION.md)明确技能 Catalog 统一、上下文来源报告、固定路由与技能候选发布的边界；网关和定时调度由宿主组合。提案中的新增能力尚未实施。
+
 ## 模块与版本
 
 模块路径：`github.com/kart-io/goagent-harness`；Go 1.26 及以上；GoAgent 基线为 **v0.32.2**。
