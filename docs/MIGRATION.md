@@ -16,10 +16,18 @@ Builder、Runnable、Graph、durable、budget、observe、Dispatcher/Pipeline、
 
 ## 依赖与验证
 
-当前模块依赖已发布的 GoAgent v0.32.2，包含 Preset 所需循环扩展点与当前执行环境接口；最初拆分基线为 v0.23.0。后续独立版本发布须更新明确的 GoAgent 版本并分别运行 `GOWORK=off go test ./...` 和本地跨仓验证脚本。
-源码已迁至 `github.com/kart-io/goagent-harness` 的 `main` 分支，尚未发布版本标签。不在 go.mod 中写入本地 replace；需要稳定版本的使用方应等待正式标签。
+当前 `go.mod` 声明 GoAgent `v0.49.3-0.20261107151110-dae60f4779d4`；新 Skills API 尚未包含在该依赖中。
+开发验证使用 [README 的临时 workspace 命令](../README.md#验证)，选择包含 `skills`、`tools/skill` 的 GoAgent checkout
+和 Go 1.27.3 工具链。独立发布前须更新到包含新 API 的可获取版本，并通过 `GOWORK=off` 的测试和构建。
 
-发布依赖与本地 checkout 均需分别验证，文件系统保证以各自具体代码为准。Sandbox 供应商适配器为独立可选模块，其临时 workspace 和单独验收命令见 [Sandbox 指南](guides/SANDBOX.md)。
+`make test/race/build` 强制关闭 workspace，`scripts/verify-goagent.sh` 也先检查版本依赖；依赖更新前使用上述临时 workspace。
+根模块测试不包含独立 Postgres 模块，也不自动启用 Docker 用例。Sandbox 供应商适配器的独立验收见 [Sandbox 指南](guides/SANDBOX.md)。
+
+## skills v3 文档迁移
+
+组件版本 3 除改用原始 `SKILL.md` 摘要外，也收紧 frontmatter 类型与长度校验：`disable-model-invocation: yes` 改为 `true` 或 `false`；纯数字名称写成 `name: '123'`；此前被忽略的 `metadata.version: 1` 现在需写成字符串 `'1'`。已声明类型的字段拒绝显式 `null`，可选字段无需值时应省略。`name` 最长 64 个 ASCII 字符，`description` 去除首尾空白后为 1–1024 个 Unicode 字符，`compatibility` 若出现则为 1–500 个 Unicode 字符。
+
+格式错误的被遮蔽同名文档仍会中止整个发现，与原行为一致；目录授权与工具权限策略不变。完整字段要求和示例见 [Preset v3 解析兼容性](../preset/README.md#v3-解析兼容性)。
 
 ## 示例与设计
 

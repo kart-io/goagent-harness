@@ -1,28 +1,25 @@
 package preset
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
-	"slices"
 	"strings"
 
-	"github.com/kart-io/goagent/interfaces"
-	"github.com/kart-io/goagent/tools"
+	"github.com/kart-io/goagent/constants"
+	"github.com/kart-io/goagent/skills"
 	"github.com/kart-io/goagent/tools/policy"
-	"gopkg.in/yaml.v3"
+	skilltool "github.com/kart-io/goagent/tools/skill"
 )
 
 // ComponentSkills 是技能组件名。
 const ComponentSkills = "skills"
 
 // ToolLoadSkill 是加载技能说明的工具名。
-const ToolLoadSkill = "load_skill"
+const ToolLoadSkill = constants.ToolLoadSkill
 
 // SkillsConfig 是 skills 组件的配置。技能是目录下的 <名称>/SKILL.md，开头为 YAML frontmatter（name、description）。
 // 系统提示词只列出名称与描述，模型需要时用 load_skill 读取完整说明与目录中的其他文件。
@@ -32,18 +29,9 @@ type SkillsConfig struct {
 	Dirs []string `yaml:"dirs"`
 }
 
-var skillNamePattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
-
-// skill 是 Build 时读取的一个技能。
-type skill struct {
-	name, description, body string
-	root                    *os.Root
-	hidden                  bool
-}
-
 func init() {
 	Register(Spec[SkillsConfig]{
-		Name: ComponentSkills, Version: "2", Singleton: true,
+		Name: ComponentSkills, Version: "3", Singleton: true,
 		Validate: func(c *SkillsConfig) error {
 			if len(c.Dirs) == 0 {
 				c.Dirs = []string{".agents/skills", ".claude/skills"}
@@ -70,8 +58,13 @@ func init() {
 
 func outsideWorkspace(dir string) bool { return filepath.IsAbs(dir) || strings.HasPrefix(dir, "~") }
 
-func buildSkills(_ context.Context, a *Assembler, c *SkillsConfig) error {
-	var skills []skill
+func buildSkills(ctx context.Context, a *Assembler, c *SkillsConfig) (err error) {
+	var roots []*os.Root
+	defer func() {
+		for i := len(roots) - 1; i >= 0; i-- {
+			err = errors.Join(err, roots[i].Close())
+		}
+	}()
 	for _, d := range c.Dirs {
 		dir, err := openSkillDirectory(a.Root(), d)
 		if errors.Is(err, fs.ErrNotExist) {
@@ -80,31 +73,30 @@ func buildSkills(_ context.Context, a *Assembler, c *SkillsConfig) error {
 		if err != nil {
 			return err
 		}
-		found, err := readSkills(dir, a.OnClose)
-		err = errors.Join(err, dir.Close())
-		if err != nil {
-			return err
-		}
-		for _, s := range found {
-			if !slices.ContainsFunc(skills, func(x skill) bool { return x.name == s.name }) {
-				skills = append(skills, s)
-			}
-		}
+		roots = append(roots, dir)
 	}
-	if len(skills) == 0 {
+	catalog, err := skills.Discover(ctx, roots...)
+	if err != nil {
+		return err
+	}
+	// Discover borrows the input roots and owns the retained skill handles.
+	// Register cleanup before assembly, including for an empty catalog.
+	a.OnClose(catalog.Close)
+	metadata := catalog.List()
+	if len(metadata) == 0 {
 		return nil
 	}
 	var sb strings.Builder
 	sb.WriteString("可用技能（需要时用 " + ToolLoadSkill + " 加载完整说明后再按说明操作）：\n")
 	var names []string
-	for _, s := range skills {
-		names = append(names, s.name+"@"+sha256Hex(s.body)[:12])
-		if !s.hidden {
-			fmt.Fprintf(&sb, "- %s：%s\n", s.name, s.description)
+	for _, s := range metadata {
+		names = append(names, s.Name+"@"+s.Digest[:12])
+		if !s.DisableModelInvocation {
+			fmt.Fprintf(&sb, "- %s：%s\n", s.Name, s.Description)
 		}
 	}
 	a.AddPrompt(strings.TrimSuffix(sb.String(), "\n"))
-	a.AddTools(loadSkillTool(skills))
+	a.AddTools(skilltool.New(catalog))
 	a.AddRules([]policy.Rule{{Tool: ToolLoadSkill, Decision: policy.Allow}}, nil, false)
 	a.SetInfo("skills", strings.Join(names, ","))
 	return nil
@@ -119,134 +111,18 @@ func openSkillDirectory(root, d string) (*os.Root, error) {
 		if err != nil {
 			return nil, err
 		}
-		return os.OpenRoot(filepath.Join(home, strings.TrimPrefix(d, "~")))
+		return os.OpenRoot(filepath.Join(home, strings.TrimPrefix(d, "~")) + string(os.PathSeparator) + ".")
 	case filepath.IsAbs(d):
-		return os.OpenRoot(d)
+		return os.OpenRoot(d + string(os.PathSeparator) + ".")
 	case root == "":
 		return nil, fmt.Errorf("相对技能目录 %s 需要 Host.Root", d)
 	}
-	workspace, err := os.OpenRoot(root)
+	workspace, err := os.OpenRoot(root + string(os.PathSeparator) + ".")
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = workspace.Close() }()
-	return workspace.OpenRoot(d)
-}
-
-// Each skill retains its directory handle until Assembly.Close. Metadata and
-// references share that same boundary, including after a directory is renamed.
-func readSkills(dir *os.Root, onClose func(func() error)) ([]skill, error) {
-	entries, err := fs.ReadDir(dir.FS(), ".")
-	if err != nil {
-		return nil, err
-	}
-	var out []skill
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		path := filepath.Join(dir.Name(), e.Name(), "SKILL.md")
-		root, err := dir.OpenRoot(e.Name())
-		if err != nil {
-			return nil, err
-		}
-		data, err := root.ReadFile("SKILL.md")
-		if err != nil {
-			closeErr := root.Close()
-			if errors.Is(err, fs.ErrNotExist) && closeErr == nil {
-				continue
-			}
-			return nil, errors.Join(err, closeErr)
-		}
-		onClose(root.Close)
-		s, err := parseSkill(data)
-		if err != nil {
-			return nil, fmt.Errorf("技能 %s: %w", path, err)
-		}
-		if s.name != e.Name() {
-			return nil, fmt.Errorf("技能 %s: name %q 与目录名不一致", path, s.name)
-		}
-		s.root = root
-		out = append(out, s)
-	}
-	return out, nil
-}
-
-func parseSkill(data []byte) (skill, error) {
-	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
-	rest, ok := bytes.CutPrefix(data, []byte("---\n"))
-	if !ok {
-		return skill{}, errors.New("缺少 YAML frontmatter")
-	}
-	front, body, ok := bytes.Cut(rest, []byte("\n---"))
-	if !ok {
-		return skill{}, errors.New("frontmatter 未结束")
-	}
-	var meta struct {
-		Name                   string `yaml:"name"`
-		Description            string `yaml:"description"`
-		DisableModelInvocation bool   `yaml:"disable-model-invocation"`
-	}
-	if err := yaml.Unmarshal(front, &meta); err != nil {
-		return skill{}, err
-	}
-	if !skillNamePattern.MatchString(meta.Name) {
-		return skill{}, fmt.Errorf("name %q 须为小写字母、数字与连字符", meta.Name)
-	}
-	if strings.TrimSpace(meta.Description) == "" {
-		return skill{}, errors.New("缺少 description")
-	}
-	_, body, _ = bytes.Cut(body, []byte("\n"))
-	return skill{name: meta.Name, description: strings.TrimSpace(meta.Description), body: strings.TrimSpace(string(body)), hidden: meta.DisableModelInvocation}, nil
-}
-
-// loadSkillTool 返回 load_skill：不带 file 时返回 SKILL.md 正文（Build 时读取）与目录中的其他文件，带 file 时读取该文件。
-func loadSkillTool(skills []skill) interfaces.Tool {
-	return tools.NewBaseTool(ToolLoadSkill,
-		"加载技能的完整说明。name 为技能名；说明中提到技能目录里的其他文件时，用 file 读取（相对技能目录的路径）。",
-		`{
-			"type": "object",
-			"properties": {
-				"name": {"type": "string", "description": "技能名"},
-				"file": {"type": "string", "description": "技能目录中的文件，省略时返回 SKILL.md 的说明"}
-			},
-			"required": ["name"],
-			"additionalProperties": false
-		}`,
-		func(ctx context.Context, input *interfaces.ToolInput) (*interfaces.ToolOutput, error) {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			name, _ := input.Args["name"].(string)
-			i := slices.IndexFunc(skills, func(s skill) bool { return s.name == name })
-			if i < 0 {
-				return tools.Rejected("unknown skill "+name, nil), nil
-			}
-			s := skills[i]
-			file, _ := input.Args["file"].(string)
-			if file == "" {
-				var files []string
-				err := fs.WalkDir(s.root.FS(), ".", func(path string, entry fs.DirEntry, err error) error {
-					if err != nil {
-						return err
-					}
-					if err := ctx.Err(); err != nil {
-						return err
-					}
-					if !entry.IsDir() && path != "SKILL.md" {
-						files = append(files, path)
-					}
-					return nil
-				})
-				if err != nil {
-					return nil, err
-				}
-				return &interfaces.ToolOutput{Success: true, Result: map[string]any{"name": s.name, "instructions": s.body, "files": files}}, nil
-			}
-			data, err := s.root.ReadFile(file)
-			if err != nil {
-				return tools.Rejected(fmt.Sprintf("skill %s has no file %s: %v", s.name, file, err), nil), nil
-			}
-			return &interfaces.ToolOutput{Success: true, Result: map[string]any{"name": s.name, "file": file, "content": string(data)}}, nil
-		})
+	// A final dot forces d to be acquired as a directory before opening the
+	// final component, so a FIFO replacing the source cannot block Build.
+	return workspace.OpenRoot(d + string(os.PathSeparator) + ".")
 }

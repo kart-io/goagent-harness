@@ -170,7 +170,54 @@ Git 读取工具也可通过仓库配置或辅助程序执行子进程，所以�
 
 `<目录>/<名称>/SKILL.md`，以 YAML frontmatter 开头（`name` 须与目录名一致，`description` 必填，`disable-model-invocation: true` 时不列入提示词）。系统提示词列出技能的名称与描述，模型用 `load_skill` 读取说明（Build 时读取）与技能目录中的其他文件；读取限定在技能目录内。同名技能以先出现的目录为准。不可信层读取工作区外的目录（绝对路径或 `~`）需要授权。
 
-技能发现与读取使用 `os.Root` 限定目录范围。`SKILL.md` 和参考文件可使用指向技能目录内部的相对符号链接，越界链接和绝对链接会被拒绝。Build 持有每个技能的目录句柄，目录被重命名或原路径被替换后仍读取原目录；`Assembly.Close` 和装配失败会释放句柄。skills 组件版本已升至 2，使用旧版本技能装配清单的持久运行需新建会话。
+技能发现与读取使用 `os.Root` 限定目录范围。`SKILL.md` 和参考文件可使用指向技能目录内部的相对符号链接，越界链接和绝对链接会被拒绝。Build 持有每个技能的目录句柄，目录被重命名或原路径被替换后仍读取原目录；`Assembly.Close` 和装配失败会释放句柄。通用解析、目录管理与加载工具由 GoAgent 的 `skills` 和 `tools/skill` 提供；Harness 保留默认目录、授权、提示词与装配清单。`disable-model-invocation` 只隐藏提示词条目，仍可按名称加载。
+
+skills 组件版本已升至 3：清单中的 `name@digest` 使用原始 `SKILL.md`（含 frontmatter）的 SHA-256 前 12 位，替代旧版正文摘要，因此元数据或文件格式变化也会改变清单；参考文件仍在调用时读取，不计入该摘要。使用旧版本技能装配清单的持久运行需新建会话。
+
+### v3 解析兼容性
+
+除摘要变化外，v3 按 YAML 1.2 保留字段类型并严格校验；以下旧文档需要调整：
+
+| 旧写法 | v3 写法与含义 |
+|---|---|
+| `disable-model-invocation: yes` | 改为 `disable-model-invocation: true`（或 `false`）。旧解析器接受 `yes` 为布尔值，v3 将其视为字符串并拒绝；也不要写成带引号的 `'true'`。 |
+| `name: 123` | 改为 `name: '123'`，目录名仍为 `123`。纯数字名称必须显式写成字符串。 |
+| `metadata: {version: 1}` | 改为 `metadata: {version: '1'}`。旧版忽略 `metadata`，v3 读取它并要求所有属性值为字符串。 |
+| `license: null`、`disable-model-invocation: null`、`metadata: {version: null}` | 拒绝显式 `null`。可选字段不需要时应省略；需要时提供正确类型的值。`metadata: null` 同样无效。 |
+
+`name`、`description`、`license`、`compatibility`、`allowed-tools` 必须是字符串；`disable-model-invocation` 必须是布尔值；`metadata` 必须是字符串到字符串的映射。显式 `null` 不会被当作省略字段或默认值。
+
+技能 frontmatter 使用有展开预算的严格映射 API `codec/yaml.DecodeMapping`：各层映射键都必须是字符串，YAML 合并键 `<<` 和二进制标量 `!!binary` 会被拒绝。元数据使用文本，二进制素材放在附属文件中。普通的小型值别名仍可使用，但循环别名或展开后超过解码预算的文档会被拒绝；不能只按原始文件大小判断是否可接受。这些限制适用于该严格解码入口，core 通用 `codec/yaml.Unmarshal` 的行为不变。
+
+长度约束也更严格：`name` 为 1–64 个 ASCII 小写字母、数字或单连字符，不能以连字符开头或结尾；`description` 去除首尾空白后为 1–1024 个 Unicode 字符；可选 `compatibility` 若出现，去除首尾空白后必须为 1–500 个 Unicode 字符。
+
+例如，保存为 `<技能目录>/123/SKILL.md`：
+
+```markdown
+---
+name: '123'
+description: 读取项目说明
+disable-model-invocation: false
+metadata:
+  version: '1'
+compatibility: 需要本地项目目录
+---
+先阅读项目的 README。
+```
+
+同名技能仍按来源目录顺序保留第一个，但所有发现的 `SKILL.md` 都要通过校验：后续目录中被遮蔽的同名文档若格式错误，仍会中止整个发现和 Build，与原行为一致。本次没有授权策略变更：工作区外目录仍由 Harness 授权，`allowed-tools` 元数据不授予工具权限，`disable-model-invocation` 仍只过滤提示词条目。
+
+### v3 工具结果兼容性
+
+引用文件继续接受 `./references/a.md`、`references/./a.md` 和重复斜线；归一化前拒绝 `..`、绝对路径与反斜线。
+空资源列表现在返回 `[]`。`load_skill` 只返回可无损编码的 UTF-8 文本，非 UTF-8 内容明确拒绝，二进制内容由宿主通过 Catalog 读取。
+缺失文件、路径不允许和超限现在分别报告原因。其他 I/O 故障（含没有公开标识的 `os.Root` 边界错误）返回非 nil 执行错误并保留原因；
+宿主需同时处理错误和 `Rejected`，不能把临时系统故障当作已完成的业务拒绝。上述变化不放宽目录访问范围。
+
+### 本地验证
+
+新 Skills API 尚未进入声明的 GoAgent 版本依赖。使用 [README 的临时 workspace 命令](../README.md#验证)
+验证两个 checkout。独立发布前需更新 GoAgent 依赖并通过 `GOWORK=off` 检查。
 
 ## 子 Agent
 

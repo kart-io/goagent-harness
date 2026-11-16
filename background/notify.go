@@ -17,7 +17,7 @@ import (
 func NotifyHandle(lookup func(owner string) *builder.Handle, idle func(context.Context, Notice) error) func(context.Context, Notice) error {
 	return func(ctx context.Context, notice Notice) error {
 		if h := lookup(notice.Owner); h != nil {
-			err := h.SteerOnce(notice.Key(), noticeText(notice))
+			err := h.SteerOnce(ctx, notice.Key(), noticeText(notice))
 			if err == nil || !errors.Is(err, agentErrors.ErrAgentHandleDone) {
 				return err
 			}
