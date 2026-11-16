@@ -77,7 +77,7 @@ type record struct {
 	steered       bool
 }
 
-func (r *record) onResult(_ context.Context, res tools.DispatchResult) error {
+func (r *record) onResult(ctx context.Context, res tools.DispatchResult) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	msg, rejected := tools.RejectedResult(res.Output)
@@ -101,7 +101,7 @@ func (r *record) onResult(_ context.Context, res tools.DispatchResult) error {
 		if !r.steered && r.handle != nil {
 			r.steered = true
 			fmt.Printf("  [Steer] %s\n", steer)
-			if err := r.handle.Steer(steer); err != nil {
+			if err := r.handle.Steer(ctx, steer); err != nil {
 				return err
 			}
 		}
@@ -256,7 +256,7 @@ func run(apiKey string) error {
 	rec.handle = h
 	rec.mu.Unlock()
 	// Followup 排在第一轮结束之后，第二轮续接第一轮的对话。
-	if err := h.Followup(followup); err != nil {
+	if err := h.Followup(ctx, followup); err != nil {
 		return err
 	}
 	out, err := h.Wait(ctx)
