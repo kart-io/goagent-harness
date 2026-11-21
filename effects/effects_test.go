@@ -474,7 +474,7 @@ func TestRepeatedUnconfirmedBacksOff(t *testing.T) {
 		}, 5*time.Second, 2*time.Millisecond)
 		r := recordOf(t, queue, "a")
 		require.Equal(t, failures+1, r.Attempts)
-		require.Equal(t, time.Unix(0, clock.Load()).Add(backoff), r.NextAt)
+		require.WithinDuration(t, time.Unix(0, clock.Load()).Add(backoff), r.NextAt, 0)
 		if failures < 2 {
 			clock.Store(r.NextAt.UnixNano())
 		}
