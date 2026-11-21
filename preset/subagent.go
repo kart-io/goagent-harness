@@ -545,7 +545,7 @@ func BuilderRunner(client llm.Client, maxIterations int) func(context.Context, *
 		if durable.HasJournal(ctx) {
 			// 只有后台子工作带日志；执行键已区分每个 child，范围名固定即可。
 			// 没有人在等它重新发起，重启后要自己继续，代价是被打断的请求可能重复计费，由预算兜底。
-			b = b.WithDurableScope("subagent").WithInterruptedModelResend()
+			b = b.WithDurableScope("subagent").WithInterruptedModelResends(2)
 		}
 		agent, err := b.Build()
 		if err != nil {
