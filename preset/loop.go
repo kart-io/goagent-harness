@@ -62,11 +62,12 @@ const transientRetries = 3
 // Configure 把装配结果交给 Builder：系统提示词、工具与循环扩展点。
 // 编码 Agent 的会话很长，默认让模型看到可恢复的工具失败（WithToolErrorFeedback），
 // 并在组件钩子之后重试暂时性的模型请求失败（RetryTransient）。
+// 恢复次数由全部 RequestError 钩子共享，goagent 中 0 表示不恢复，因此显式传 transientRetries。
 func Configure[S core.State](b *builder.AgentBuilder[S], asm *Assembly) *builder.AgentBuilder[S] {
 	l := asm.Loop
 	return b.WithSystemPrompt(asm.SystemPrompt).WithTools(asm.Tools...).
 		WithPreStep(l.PreStep...).WithRequestHook(l.Request...).WithTurnStopping(l.TurnStopping...).
 		WithPromptSections(l.PromptSections...).WithPromptContexts(l.PromptContexts...).
-		WithRequestError(0, append(slices.Clone(l.RequestError), builder.RetryTransient(transientRetries, nil))...).
+		WithRequestError(transientRetries, append(slices.Clone(l.RequestError), builder.RetryTransient(transientRetries, nil))...).
 		WithToolErrorFeedback()
 }
