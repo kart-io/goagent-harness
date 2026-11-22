@@ -1,6 +1,7 @@
 package planning
 
 import (
+	json "github.com/kart-io/goagent/codec/json"
 	"github.com/stretchr/testify/require"
 	"testing"
 )
@@ -147,7 +148,7 @@ func TestFreezeRecordsKnownInputsAndBlocksContractChange(t *testing.T) {
 }
 func TestWaveSizeBoundIsAtomic(t *testing.T) {
 	s, c, _ := allocationFixture(t)
-	c.MaxStateBytes = 64
+	c.MaxStateBytes = checkpointBytes(t, s) + 150
 	v, e := Allocate(s, c, "root")
 	require.NoError(t, e)
 	require.Equal(t, "blocked", v.Outcome.Status)
@@ -240,6 +241,51 @@ func TestFinalReviewEnforcesWriteFreeze(t *testing.T) {
 				require.Equal(t, "blocked", got.Outcome.Status)
 				require.Equal(t, "stop", got.PendingAction)
 			}
+		})
+	}
+}
+
+func checkpointBytes(t *testing.T, s State) int {
+	t.Helper()
+	b, e := json.Marshal(s)
+	require.NoError(t, e)
+	return len(b)
+}
+func TestAllocationCapacityLimitsEveryNewCheckpoint(t *testing.T) {
+	for _, path := range []string{"final", "waves", "no_ready"} {
+		t.Run(path, func(t *testing.T) {
+			s, c, a := allocationFixture(t)
+			c.Members[0].EffectClass = "write"
+			c.Members[0].Claims = []ResourceClaim{{"file", "write"}}
+			if path != "final" {
+				a.ID = "t-000002"
+				s.Plan.Tasks = append(s.Plan.Tasks, a)
+			}
+			wave, e := Allocate(s, c, "r")
+			require.NoError(t, e)
+			prior := acceptWave(t, wave, c)
+			switch path {
+			case "waves":
+				c.MaxWaves = 1
+			case "no_ready":
+				a := prior.Plan.Tasks[1]
+				key, e := AttemptKey("r", a.ID, 1, 1)
+				require.NoError(t, e)
+				prior.Attempts = append(prior.Attempts, Attempt{TaskID: a.ID, ExecutionKey: key, Generation: 1, Number: 1, Status: "rejected"})
+			}
+			before := prior.Clone()
+			c.MaxStateBytes = checkpointBytes(t, prior)
+			got, e := Allocate(prior, c, "r")
+			require.ErrorContains(t, e, "状态大小上限")
+			require.Equal(t, before, got)
+			require.Equal(t, before, prior)
+			c.MaxStateBytes += 90
+			got, e = Allocate(prior, c, "r")
+			require.NoError(t, e)
+			require.NotNil(t, got.Outcome)
+			require.Equal(t, "blocked", got.Outcome.Status)
+			require.LessOrEqual(t, checkpointBytes(t, got), c.MaxStateBytes)
+			require.Equal(t, before, prior)
 		})
 	}
 }

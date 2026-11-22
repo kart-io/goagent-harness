@@ -196,6 +196,32 @@ func Allocate(state State, c Config, root string) (State, error) {
 	if err != nil {
 		return state, err
 	}
+	next, err := allocate(state, c, root)
+	if err != nil {
+		return state, err
+	}
+	encoded, err := json.Marshal(next)
+	if err != nil {
+		return state, err
+	}
+	if len(encoded) <= c.MaxStateBytes {
+		return next, nil
+	}
+	// A replay must preserve the original wave or terminal outcome.
+	if state.Wave == nil && state.Outcome == nil {
+		stop := blocked(state.Clone(), "状态大小上限")
+		encoded, err = json.Marshal(stop)
+		if err != nil {
+			return state, err
+		}
+		if len(encoded) <= c.MaxStateBytes {
+			return stop, nil
+		}
+	}
+	return state, fmt.Errorf("规划检查点超出状态大小上限 %d 字节", c.MaxStateBytes)
+}
+
+func allocate(state State, c Config, root string) (State, error) {
 	if state.Plan == nil || !nonempty(root) {
 		return state, invalid("缺少已提交计划或根运行身份")
 	}
@@ -294,12 +320,5 @@ func Allocate(state State, c Config, root string) (State, error) {
 	s.Waves = wave.Number
 	s.WaveResults = nil
 	s.PendingAction = "execute"
-	encoded, err := json.Marshal(s)
-	if err != nil {
-		return state, err
-	}
-	if len(encoded) > c.MaxStateBytes {
-		return blocked(state.Clone(), "冻结批次超出状态大小上限"), nil
-	}
 	return s, nil
 }
