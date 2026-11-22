@@ -171,6 +171,11 @@ func validate(d Dataset, m Manifest, engine Engine) error {
 	if m.PromptVersion == "" || math.IsNaN(m.Temperature) || math.IsInf(m.Temperature, 0) || m.ResultsPath != "results.jsonl" || m.SummaryPath != "summary.json" {
 		return fmt.Errorf("运行元数据无效")
 	}
+	if host, ok := engine.(interface{ validateManifest(Manifest) error }); ok {
+		if err := host.validateManifest(m); err != nil {
+			return err
+		}
+	}
 	switch m.Backend {
 	case "plan", "scripted":
 		if m.Model != "offline-none" || m.Temperature != 0 || m.PromptVersion != "planning-prompt-v1" {

@@ -5,8 +5,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/kart-io/goagent-harness/examples/planning-agent/internal/eval"
 	"os"
+	"path/filepath"
+
+	"github.com/kart-io/goagent-harness/examples/planning-agent/internal/eval"
+	"github.com/kart-io/goagent/llm"
+	"github.com/kart-io/goagent/llm/providers"
 )
 
 func main() {
@@ -21,12 +25,13 @@ func run(args []string) error {
 	out := f.String("out", "", "新输出目录")
 	backend := f.String("backend", "plan", "plan、scripted 或 live")
 	repeats := f.Int("repeats", 3, "每题独立重复次数")
+	model := f.String("model", os.Getenv("OPENAI_MODEL"), "live 模型名称")
+	baseURL := f.String("base-url", "", "OpenAI 兼容服务地址，默认读取 OPENAI_BASE_URL")
+	temperature := f.Float64("temperature", 0, "live 采样温度")
 	if e := f.Parse(args); e != nil {
 		return e
 	}
-	if *backend == "live" {
-		return fmt.Errorf("live 需要配置宿主 Engine 与模型")
-	}
+
 	if *out == "" {
 		return fmt.Errorf("需要 -out 指定新目录")
 	}
@@ -39,6 +44,21 @@ func run(args []string) error {
 		return e
 	}
 	var engine eval.Engine
+	if *backend == "live" {
+		if *model == "" {
+			return fmt.Errorf("live 需要 -model 或 OPENAI_MODEL")
+		}
+		opts := []llm.ClientOption{llm.WithModel(*model), llm.WithTemperature(*temperature)}
+		if *baseURL != "" {
+			opts = append(opts, llm.WithBaseURL(*baseURL))
+		}
+		client, err := providers.NewOpenAIWithOptions(opts...)
+		if err != nil {
+			return err
+		}
+		engine = eval.Live{Root: filepath.Join(*out, "state"), Client: client, Model: *model, Temperature: *temperature}
+		m.Model, m.Temperature, m.PromptVersion = *model, *temperature, eval.LivePromptVersion
+	}
 	if *backend == "scripted" {
 		engine = eval.Scripted{}
 	}
