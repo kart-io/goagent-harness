@@ -10,8 +10,16 @@ import (
 
 // ValidateEvidence verifies a JSON pointer and its quote against frozen sources.
 func ValidateEvidence(r EvidenceRef, inputs []SourceInput, artifacts []Artifact) error {
+	if r.SourceDigest == "" || r.QuoteDigest == "" {
+		return invalid("持久引用的来源或定位摘要缺失")
+	}
+	_, err := resolveEvidence(r, inputs, artifacts)
+	return err
+}
+
+func resolveEvidence(r EvidenceRef, inputs []SourceInput, artifacts []Artifact) (EvidenceRef, error) {
 	if r.LocatorKind != "json_pointer" {
-		return invalid("定位类型%q不可验真", r.LocatorKind)
+		return EvidenceRef{}, invalid("定位类型%q不可验真", r.LocatorKind)
 	}
 	var body []byte
 	var digest string
@@ -22,7 +30,7 @@ func ValidateEvidence(r EvidenceRef, inputs []SourceInput, artifacts []Artifact)
 			body = s.Content
 			d, e := SourceDigest(body)
 			if e != nil || d != s.Digest {
-				return invalid("来源正文与摘要不一致")
+				return EvidenceRef{}, invalid("来源正文与摘要不一致")
 			}
 			digest = d
 		}
@@ -33,28 +41,28 @@ func ValidateEvidence(r EvidenceRef, inputs []SourceInput, artifacts []Artifact)
 			body = a.Content
 			d, e := artifactDigest(a)
 			if e != nil || d != a.Digest {
-				return invalid("产物正文与摘要不一致")
+				return EvidenceRef{}, invalid("产物正文与摘要不一致")
 			}
 			digest = d
 		}
 	}
-	if matches != 1 || !nonempty(r.SourceID) || digest != r.SourceDigest {
-		return invalid("来源%q不可见、重复或摘要不符", r.SourceID)
+	if matches != 1 || !nonempty(r.SourceID) {
+		return EvidenceRef{}, invalid("来源%q不可见或重复", r.SourceID)
 	}
 	var value any
 	if err := DecodeCandidate(body, &value); err != nil {
-		return err
+		return EvidenceRef{}, err
 	}
 	if r.Locator != "" {
 		if r.Locator[0] != '/' {
-			return invalid("定位必须为JSON指针")
+			return EvidenceRef{}, invalid("定位必须为JSON指针")
 		}
 		for _, raw := range strings.Split(r.Locator[1:], "/") {
 			for i := 0; i < len(raw); i++ {
 				if raw[i] == '~' {
 					i++
 					if i == len(raw) || (raw[i] != '0' && raw[i] != '1') {
-						return invalid("JSON指针转义无效")
+						return EvidenceRef{}, invalid("JSON指针转义无效")
 					}
 				}
 			}
@@ -64,28 +72,31 @@ func ValidateEvidence(r EvidenceRef, inputs []SourceInput, artifacts []Artifact)
 				var ok bool
 				value, ok = node[key]
 				if !ok {
-					return invalid("JSON指针字段不存在")
+					return EvidenceRef{}, invalid("JSON指针字段不存在")
 				}
 			case []any:
 				idx, e := strconv.Atoi(key)
 				if e != nil || idx < 0 || strconv.Itoa(idx) != key || idx >= len(node) {
-					return invalid("JSON指针数组下标无效")
+					return EvidenceRef{}, invalid("JSON指针数组下标无效")
 				}
 				value = node[idx]
 			default:
-				return invalid("JSON指针指向标量之外")
+				return EvidenceRef{}, invalid("JSON指针指向标量之外")
 			}
 		}
 	}
 	d, e := digestJSON(value)
 	if e != nil {
-		return e
+		return EvidenceRef{}, e
 	}
-	if d != r.QuoteDigest {
-		return invalid("定位内容的摘要不符")
+	if r.SourceDigest != "" && r.SourceDigest != digest || r.QuoteDigest != "" && r.QuoteDigest != d {
+		return EvidenceRef{}, invalid("来源或定位内容的摘要不符")
 	}
-	return nil
+	r.SourceDigest = digest
+	r.QuoteDigest = d
+	return r, nil
 }
+
 func directArtifacts(a Assignment) []Artifact {
 	items := make([]Artifact, len(a.Inputs))
 	for i, r := range a.Inputs {
@@ -138,10 +149,12 @@ func ValidateTaskResult(a Assignment, r TaskResult, c Config) (TaskResult, error
 		remaining -= len(b)
 		out.Content = b
 		out.Sources = slices.Clone(out.Sources)
-		for _, ref := range out.Sources {
-			if err := ValidateEvidence(ref, a.GoalInputs, inputs); err != nil {
+		for i, ref := range out.Sources {
+			resolved, err := resolveEvidence(ref, a.GoalInputs, inputs)
+			if err != nil {
 				return TaskResult{}, err
 			}
+			out.Sources[i] = resolved
 		}
 		out.ID = durable.ChildKey(a.AttemptKey, "artifact/"+out.Name)
 		out.ProducerAttemptKey = a.AttemptKey
