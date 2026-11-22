@@ -267,3 +267,34 @@ func TestAttemptHistoryGenerationIntegrity(t *testing.T) {
 		})
 	}
 }
+
+func TestInvalidTaskIDsPrecedeDraftSizeLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ids  []string
+	}{
+		{"duplicate new", []string{"new:x", "new:x"}},
+		{"duplicate committed mixed with new", []string{"new:x", "t-000001", "t-000001"}},
+		{"empty initial", []string{"local", "  "}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, c, a := replanFixture(t)
+			c.MaxTasks = 1
+			if tc.name == "empty initial" {
+				s.Plan = nil
+				s.NextTaskID = 0
+			}
+			var tasks []TaskSpec
+			for _, id := range tc.ids {
+				item := a.clone()
+				item.ID = id
+				tasks = append(tasks, item)
+			}
+			before := s.Clone()
+			got, err := AdoptPlan(s, PlanDraft{Tasks: tasks}, c)
+			require.Error(t, err)
+			require.Equal(t, before, got)
+			require.Equal(t, before, s)
+		})
+	}
+}

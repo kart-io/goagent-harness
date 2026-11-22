@@ -100,7 +100,11 @@ func AdoptPlan(state State, draft PlanDraft, cfg Config) (State, error) {
 			}
 		}
 	}
+	seen := idSet{}
 	for _, t := range draft.Tasks {
+		if !seen.add(t.ID) {
+			return state, invalid("候选任务身份%q为空或重复", t.ID)
+		}
 		if _, ok := old[t.ID]; ok {
 			continue
 		}
