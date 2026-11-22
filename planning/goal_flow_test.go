@@ -2,6 +2,7 @@ package planning
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/kart-io/goagent/codec/json"
@@ -108,4 +109,49 @@ func TestGoalResolutionListsMissingHostParameters(t *testing.T) {
 	})
 	out := runFixture(t, State{Request: &GoalRequest{Text: "报告", Inputs: s.Goal.Inputs}}, c, d)
 	require.Contains(t, out.Outcome.Reason, "release_cutoff")
+}
+
+func TestOversizeFreshRequestStopsWithoutResolving(t *testing.T) {
+	_, c, d := graphFixture(t)
+	c.MaxStateBytes = 2048
+	calls := 0
+	d.GoalResolverVersion = "v"
+	d.GoalResolver = graphResolver(func(context.Context, GoalResolveInput) (GoalResolution, error) { calls++; return GoalResolution{}, nil })
+	initial := State{Request: &GoalRequest{Text: strings.Repeat("x", c.MaxStateBytes+1)}}
+	stopped := runFixture(t, initial, c, d)
+	require.Equal(t, "blocked", stopped.Outcome.Status)
+	require.Nil(t, stopped.Request)
+	require.Zero(t, calls)
+}
+func TestPrepareInitialStatePreservesCommittedAuthority(t *testing.T) {
+	s, c, _ := allocationFixture(t)
+	c.MaxStateBytes = 2048
+	s, e := Allocate(s, Config{Version: c.Version, Members: c.Members}, "root")
+	require.NoError(t, e)
+	require.NotNil(t, s.Wave)
+	s.Request = &GoalRequest{Text: strings.Repeat("x", c.MaxStateBytes+1)}
+	before := s.Clone()
+	out, e := PrepareInitialState(s, c)
+	require.Error(t, e)
+	require.Equal(t, before, out)
+	require.Equal(t, before, s)
+}
+func TestPrepareInitialStateBoundsFirstCheckpoint(t *testing.T) {
+	_, c, d := graphFixture(t)
+	c.MaxStateBytes = 2048
+	initial := State{Request: &GoalRequest{Text: strings.Repeat("secret", c.MaxStateBytes)}}
+	out, e := PrepareInitialState(initial, c)
+	require.NoError(t, e)
+	require.Nil(t, out.Request)
+	require.Equal(t, "blocked", out.Outcome.Status)
+	raw, e := json.Marshal(out)
+	require.NoError(t, e)
+	require.LessOrEqual(t, len(raw), c.MaxStateBytes)
+	done := runFixture(t, out, c, d)
+	require.Equal(t, out, done)
+	c.MaxStateBytes = 1
+	_, e = NewGraph(c, d)
+	require.Error(t, e)
+	_, e = PrepareInitialState(initial, c)
+	require.Error(t, e)
 }

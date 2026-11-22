@@ -30,6 +30,9 @@ func graphConfig(c Config, d Dependencies) (Config, error) {
 	if e != nil {
 		return c, e
 	}
+	if e = checkInitialCapacity(c); e != nil {
+		return c, e
+	}
 	if missingDep(d.Executor) || missingDep(d.Planner) || missingDep(d.Reviewer) || !nonempty(d.ReviewerVersion) || !nonempty(d.PlannerVersion) {
 		return c, configError("缺少规划、执行、审查依赖或版本")
 	}

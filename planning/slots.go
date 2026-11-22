@@ -81,8 +81,17 @@ func (f planningGraph) checkAssignment(s State, a Assignment, slot int) error {
 	if i < 0 {
 		return fmt.Errorf("冻结任务不在当前计划中")
 	}
-	m := memberDirectory(f.cfg)[a.Task.MemberID]
-	expected, e := freezeAssignment(s, s.Plan.Tasks[i], m, a.Inputs)
+	task := s.Plan.Tasks[i]
+	accepted, e := currentAccepted(s, f.cfg)
+	if e != nil {
+		return e
+	}
+	inputs, ready := resolveInputs(task, accepted)
+	if !ready {
+		return fmt.Errorf("冻结任务的上游结果尚未验收")
+	}
+	m := memberDirectory(f.cfg)[task.MemberID]
+	expected, e := freezeAssignment(s, task, m, inputs)
 	if e != nil {
 		return e
 	}

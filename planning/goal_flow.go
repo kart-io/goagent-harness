@@ -56,6 +56,13 @@ func trustedSources(req []SourceInput, answers []GoalAnswer, c Config) (map[stri
 }
 
 func (f planningGraph) normalize(ctx context.Context, s State) (State, error) {
+	s, err := prepareInitial(s, f.cfg)
+	if err != nil {
+		return s, err
+	}
+	if s.PendingAction == "stop" && s.Outcome != nil && s.Outcome.Status == "blocked" {
+		return s, nil
+	}
 	if s.Request == nil {
 		if e := ValidateGoalPolicy(s.Goal, f.cfg); e != nil {
 			return blocked(s, e.Error()), nil

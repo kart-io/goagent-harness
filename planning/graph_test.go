@@ -346,3 +346,31 @@ func TestGraphChecksFrozenGoalContextBeforeCallingExecutor(t *testing.T) {
 	require.Error(t, e)
 	require.Zero(t, calls)
 }
+
+func TestSlotRechecksUpstreamMetadataBeforeExecutor(t *testing.T) {
+	s, c, a := allocationFixture(t)
+	c, e := NormalizeConfig(c)
+	require.NoError(t, e)
+	b := a.clone()
+	b.ID = "t-000002"
+	b.DependsOn = []string{a.ID}
+	b.Inputs = []InputRef{{a.ID, "out"}}
+	s.Plan.Tasks = append(s.Plan.Tasks, b)
+	s, e = Allocate(s, c, "root")
+	require.NoError(t, e)
+	s = acceptWave(t, s, c)
+	s, e = Allocate(s, c, "root")
+	require.NoError(t, e)
+	for _, mutate := range []func(*Artifact){func(a *Artifact) { a.DeliverableID = "other" }, func(a *Artifact) {
+		a.ProducerAttemptKey = "other"
+		a.ID = durable.ChildKey("other", "artifact/"+a.Name)
+	}} {
+		bad := s.Clone()
+		mutate(&bad.Wave.Assignments[0].Inputs[0].Artifact)
+		calls := 0
+		f := planningGraph{cfg: c, deps: Dependencies{Executor: graphExecutor(func(context.Context, Assignment) (TaskResult, error) { calls++; return TaskResult{}, nil })}}
+		_, err := f.parallel().Branches[0].Run(t.Context(), bad)
+		require.Error(t, err)
+		require.Zero(t, calls)
+	}
+}
