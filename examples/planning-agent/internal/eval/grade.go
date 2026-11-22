@@ -3,7 +3,6 @@ package eval
 import (
 	"encoding/json"
 	"math/big"
-	"reflect"
 	"slices"
 	"strings"
 )
@@ -133,8 +132,14 @@ func support(c Case, f map[string]json.RawMessage) string {
 		}
 		return verdict(len(f) == 0)
 	case "insufficient-02":
-		a, b := get("s1", "/owner"), get("s2", "/owner")
-		return verdict(len(f) == 0 && a != nil && b != nil && !reflect.DeepEqual(a, b) && get("s1", "/task") == get("s2", "/task"))
+		a, okA := get("s1", "/owner").(string)
+		b, okB := get("s2", "/owner").(string)
+		left, okLeft := get("s1", "/task").(string)
+		right, okRight := get("s2", "/task").(string)
+		if !okA || !okB || !okLeft || !okRight {
+			return "unknown"
+		}
+		return verdict(len(f) == 0 && left == right && a != b)
 	case "insufficient-03":
 		for _, s := range c.Sources {
 			doc, ok := value(s.Content).(map[string]any)

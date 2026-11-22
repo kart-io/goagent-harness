@@ -156,3 +156,74 @@ func TestGraderChecksFrozenCases(t *testing.T) {
 		})
 	}
 }
+
+func TestPlanNeverInvokesInjectedEngine(t *testing.T) {
+	d := frozen(t)
+	m, _ := Plan(d, 3, "plan")
+	calls := 0
+	_, s, e := Run(context.Background(), d, m, fake(func(context.Context, Variant, Input) (Observation, error) { calls++; return Observation{}, nil }))
+	if e != nil || calls != 0 || s.NotRun != 108 {
+		t.Fatal(calls, s, e)
+	}
+}
+
+func TestManifestMustMatchCompleteFrozenDesign(t *testing.T) {
+	for _, kind := range []string{"truncated", "material", "limits", "question", "variant", "model"} {
+		t.Run(kind, func(t *testing.T) {
+			d := frozen(t)
+			m, _ := Plan(d, 3, "scripted")
+			switch kind {
+			case "truncated":
+				m.Trials = m.Trials[:107]
+			case "material":
+				d.Cases[0].Sources[0].Content = json.RawMessage(`{"component":"changed"}`)
+			case "limits":
+				m.Trials[0].Limits.Tokens++
+			case "question":
+				m.Trials[0].Question = "absent"
+			case "variant":
+				m.Trials[0].Variant.Slots++
+			case "model":
+				m.Model = "real-model"
+			}
+			out := filepath.Join(t.TempDir(), "run")
+			calls := 0
+			e := Write(context.Background(), out, d, m, fake(func(context.Context, Variant, Input) (Observation, error) { calls++; return Observation{}, nil }))
+			if e == nil || calls != 0 {
+				t.Fatal(calls, e)
+			}
+			if _, e := os.Stat(out); !os.IsNotExist(e) {
+				t.Fatal("预检失败仍创建文件", e)
+			}
+		})
+	}
+}
+
+func TestUnsupportedConflictShapeAndIncrementalPersistence(t *testing.T) {
+	d := frozen(t)
+	c := d.Cases[10]
+	c.Sources[0].Content = json.RawMessage(`{"task":{"id":"t1"},"owner":"甲"}`)
+	c.Sources[1].Content = json.RawMessage(`{"task":{"id":"t1"},"owner":"乙"}`)
+	o := Observation{Answer: `{"facts":{},"evidence":[],"abstain":true}`, Effects: []string{}}
+	if g := grade(c, o); g.Evidence != "unknown" || g.Pass {
+		t.Fatal(g)
+	}
+	d = frozen(t)
+	m, _ := Plan(d, 1, "scripted")
+	out := filepath.Join(t.TempDir(), "run")
+	n := 0
+	e := Write(context.Background(), out, d, m, fake(func(context.Context, Variant, Input) (Observation, error) {
+		if n == 1 {
+			b, e := os.ReadFile(filepath.Join(out, "results.jsonl"))
+			var r Result
+			if e != nil || json.Unmarshal(b, &r) != nil || r.Answer != "部分答案" || r.Costs.Foreground.KnownTokens != 3 {
+				t.Fatalf("首条尚未持久化 %s %v", b, e)
+			}
+		}
+		n++
+		return Observation{Answer: "部分答案", Outcome: "failed", Costs: Costs{Foreground: Measurement{KnownTokens: 3}}}, nil
+	}))
+	if e != nil || n != 36 {
+		t.Fatal(n, e)
+	}
+}

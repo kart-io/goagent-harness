@@ -70,6 +70,7 @@ type Dataset struct {
 	Synthetic bool   `json:"synthetic"`
 	Cases     []Case `json:"cases"`
 	digest    string
+	snapshot  [sha256.Size]byte
 }
 
 // Load reads and validates the frozen dataset.
@@ -110,7 +111,12 @@ func Load(path string) (Dataset, error) {
 			}
 		}
 	}
-	return d, nil
+	d.snapshot, e = d.fingerprint()
+	return d, e
+}
+func (d Dataset) fingerprint() ([sha256.Size]byte, error) {
+	raw, err := json.Marshal(d)
+	return sha256.Sum256(raw), err
 }
 func value(b json.RawMessage) any {
 	dec := json.NewDecoder(bytes.NewReader(b))
