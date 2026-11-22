@@ -52,18 +52,21 @@ type Key struct {
 
 // Manifest fixes trial order, input identity, settings and output locations.
 type Manifest struct {
-	Config        Config  `json:"config"`
-	DatasetSHA256 string  `json:"dataset_sha256"`
-	PromptVersion string  `json:"prompt_version"`
-	JudgeVersion  string  `json:"judge_version"`
-	Temperature   float64 `json:"temperature"`
-	ResultsFile   string  `json:"results_file"`
-	SummaryFile   string  `json:"summary_file"`
-	Trials        []Key   `json:"trials"`
+	PinPolicy     string      `json:"pin_policy"`
+	Formation     []Formation `json:"formation,omitempty"`
+	Config        Config      `json:"config"`
+	DatasetSHA256 string      `json:"dataset_sha256"`
+	PromptVersion string      `json:"prompt_version"`
+	JudgeVersion  string      `json:"judge_version"`
+	Temperature   float64     `json:"temperature"`
+	ResultsFile   string      `json:"results_file"`
+	SummaryFile   string      `json:"summary_file"`
+	Trials        []Key       `json:"trials"`
 }
 
 // Row preserves the answer even if grading fails.
 type Row struct {
+	contextDigest [sha256.Size]byte
 	Key
 	Status       string        `json:"status"`
 	Answer       string        `json:"answer"`
@@ -78,10 +81,14 @@ type Row struct {
 
 // Formation records the shared extraction expense once per case and repeat.
 type Formation struct {
-	Case   string `json:"case"`
-	Repeat int    `json:"repeat"`
-	Cost   Cost   `json:"cost"`
-	Error  string `json:"error,omitempty"`
+	PinnedRecords     int    `json:"pinned_records"`
+	ComparedQuestions int    `json:"compared_questions"`
+	ChangedContexts   int    `json:"changed_contexts"`
+	Treatment         string `json:"treatment"`
+	Case              string `json:"case"`
+	Repeat            int    `json:"repeat"`
+	Cost              Cost   `json:"cost"`
+	Error             string `json:"error,omitempty"`
 }
 
 // Summary reports success against every planned question.
@@ -99,11 +106,20 @@ func makeManifest(cases []memeval.Case, c Config) (Manifest, error) {
 	if len(cases) == 0 || c.Repeats < 1 || c.Runes <= 0 || c.CoreRunes < 0 || c.CoreRunes > c.Runes || c.Requests < 1 || c.OutputTokens < 1 || c.ContextTokens <= c.OutputTokens || c.Tokens <= 0 || c.FormationModel == "" || c.ForegroundModel == "" || c.JudgeModel == "" {
 		return Manifest{}, fmt.Errorf("配置或用例无效")
 	}
+	// 使用框架构造器校验块头和布局的联合限制，先于计划写入及任何模型准入。
+	dir, err := os.MkdirTemp("", "memory-eval-validation-*")
+	if err != nil {
+		return Manifest{}, err
+	}
+	_, configErr := openMemory(dir, memory.Config{RecallRunes: c.Runes, ContextLayout: &memory.ContextLayout{CoreRunes: c.CoreRunes}})
+	if err = errors.Join(configErr, os.RemoveAll(dir)); err != nil {
+		return Manifest{}, err
+	}
 	data, err := json.Marshal(cases)
 	if err != nil {
 		return Manifest{}, err
 	}
-	m := Manifest{Config: c, DatasetSHA256: fmt.Sprintf("%x", sha256.Sum256(data)), PromptVersion: "memeval-answer-v1", JudgeVersion: "memeval-longmemeval-v1", ResultsFile: "results.jsonl", SummaryFile: "summary.json"}
+	m := Manifest{PinPolicy: pinPolicy, Config: c, DatasetSHA256: fmt.Sprintf("%x", sha256.Sum256(data)), PromptVersion: "memeval-answer-v1", JudgeVersion: "memeval-longmemeval-v1", ResultsFile: "results.jsonl", SummaryFile: "summary.json"}
 	seen := map[string]bool{}
 	for _, cs := range cases {
 		if cs.ID == "" || seen[cs.ID] || len(cs.Questions) == 0 {
@@ -166,19 +182,20 @@ func Run(ctx context.Context, out string, cases []memeval.Case, c Config, client
 			dir := filepath.Join(out, fmt.Sprintf("r%d-c%d", r, i))
 			var systems []layoutSystem
 			var formErr error
+			formed := Formation{Case: cs.ID, Repeat: r, Treatment: "unobserved"}
+			contexts := map[string]map[string][sha256.Size]byte{"legacy": {}, "layout": {}}
 			if ctx.Err() == nil {
 				mt, e := newMeter(filepath.Join(dir, "formation-cost"), clients.Formation, c.FormationModel, c)
-				formed := Formation{Case: cs.ID, Repeat: r}
 				formErr = e
 				if e == nil {
-					systems, formErr = form(ctx, dir, cs, mt, c.Runes, memory.ContextLayout{CoreRunes: c.CoreRunes})
+					systems, formErr = form(ctx, dir, cs, mt, c.Runes, memory.ContextLayout{CoreRunes: c.CoreRunes}, &formed)
 					formed.Cost, e = mt.cost(ctx)
 					formErr = errors.Join(formErr, e)
 				}
 				if formErr != nil {
 					formed.Error = formErr.Error()
 				}
-				s.Formation = append(s.Formation, formed)
+
 			}
 			for range 3 {
 				for _, q := range cs.Questions {
@@ -200,6 +217,9 @@ func Run(ctx context.Context, out string, cases []memeval.Case, c Config, client
 						}
 						row = ask(ctx, filepath.Join(out, k.Namespace), k, sys, cs, q, c, *clients)
 					}
+					if group, ok := contexts[k.Variant]; ok && row.Foreground.Physical > 0 {
+						group[q.ID] = row.contextDigest
+					}
 					switch row.Status {
 					case "completed":
 						s.Completed++
@@ -216,10 +236,32 @@ func Run(ctx context.Context, out string, cases []memeval.Case, c Config, client
 					}
 				}
 			}
+			for id, legacy := range contexts["legacy"] {
+				if current, ok := contexts["layout"][id]; ok {
+					formed.ComparedQuestions++
+					if legacy != current {
+						formed.ChangedContexts++
+					}
+				}
+			}
+			switch {
+			case formed.ChangedContexts > 0:
+				formed.Treatment = "changed_context"
+			case formed.ComparedQuestions == len(cs.Questions):
+				formed.Treatment = "no_layout_effect"
+			}
+			s.Formation = append(s.Formation, formed)
 		}
 	}
 	s.SuccessRate = float64(s.Correct) / float64(s.Planned)
-	return s, errors.Join(f.Close(), writeJSON(filepath.Join(out, m.SummaryFile), s), ctx.Err())
+	m.Formation = s.Formation
+	// 原子替换清单，观察值不能破坏预登记的键与策略。
+	staged := filepath.Join(out, "manifest.final.json")
+	manifestErr := writeJSON(staged, m)
+	if manifestErr == nil {
+		manifestErr = os.Rename(staged, filepath.Join(out, "manifest.json"))
+	}
+	return s, errors.Join(f.Close(), manifestErr, writeJSON(filepath.Join(out, m.SummaryFile), s), ctx.Err())
 }
 
 func ask(ctx context.Context, dir string, k Key, sys memeval.System, cs memeval.Case, q memeval.Question, c Config, clients Clients) (row Row) {
@@ -241,6 +283,7 @@ func ask(ctx context.Context, dir string, k Key, sys memeval.System, cs memeval.
 	runner := memeval.Runner{Systems: []memeval.System{observed}, Answerer: fore, Judge: judge}
 	results, runErr := runner.Run(ctx, []memeval.Case{cs})
 	row.Answer = fore.answer
+	row.contextDigest = sha256.Sum256([]byte(observed.retrieved.Text))
 	row.ContextRunes = utf8.RuneCountInString(observed.retrieved.Text)
 	row.EvidenceHit = slices.ContainsFunc(observed.retrieved.Sessions, func(id string) bool { return slices.Contains(q.Evidence, id) })
 	row.Foreground, err = fore.cost(ctx)

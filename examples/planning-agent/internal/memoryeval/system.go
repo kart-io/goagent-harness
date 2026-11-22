@@ -60,7 +60,10 @@ func copyLayouts(dir string, c memeval.Case, cfg memory.Config, layout memory.Co
 	return systems, nil
 }
 
-func form(ctx context.Context, dir string, c memeval.Case, model llm.Client, runes int, layout memory.ContextLayout) ([]layoutSystem, error) {
+const pinLimit = 8
+const pinPolicy = "empty-query-recall-top-8-before-copy-v1"
+
+func form(ctx context.Context, dir string, c memeval.Case, model llm.Client, runes int, layout memory.ContextLayout, stats *Formation) ([]layoutSystem, error) {
 	var last time.Time
 	for _, s := range c.Sessions {
 		if s.Date.After(last) {
@@ -83,12 +86,21 @@ func form(ctx context.Context, dir string, c memeval.Case, model llm.Client, run
 	if err != nil {
 		return nil, err
 	}
-	records, err := formed.Recall(memory.WithNamespace(ctx, c.ID), memory.Query{K: 1})
+	ns := memory.WithNamespace(ctx, c.ID)
+	records, err := formed.Recall(ns, memory.Query{K: pinLimit})
 	if err != nil {
 		return nil, err
 	}
 	if len(records) == 0 {
 		return nil, fmt.Errorf("抽取后没有有效记忆")
+	}
+	// 使用空查询的公开排序，在复制前钉住同一批有效记录。保留原有来源与正文。
+	pinned := true
+	for _, record := range records {
+		if _, err = formed.Update(ns, record.ID, record.Revision, memory.Patch{Pinned: &pinned}); err != nil {
+			return nil, err
+		}
+		stats.PinnedRecords++
 	}
 	return copyLayouts(dir, c, cfg, layout)
 }

@@ -26,13 +26,16 @@ func TestDefaultPlanAndScriptedMultipleSessions(t *testing.T) {
 	require.Len(t, files, 1)
 	require.Equal(t, "manifest.json", files[0].Name())
 	out := filepath.Join(dir, "smoke")
-	require.NoError(t, run(t.Context(), []string{"-dataset", path, "-out", out, "-backend", "scripted", "-repeats", "1"}))
+	require.NoError(t, run(t.Context(), []string{"-dataset", path, "-out", out, "-backend", "scripted", "-repeats", "1", "-core-runes", "0"}))
 	data, err := os.ReadFile(filepath.Join(out, "summary.json"))
 	require.NoError(t, err)
 	var s memoryeval.Summary
 	require.NoError(t, json.Unmarshal(data, &s))
 	require.Equal(t, 3, s.Completed)
 	require.Zero(t, s.Failed)
+	require.Len(t, s.Formation, 1)
+	require.Positive(t, s.Formation[0].PinnedRecords)
+	require.Equal(t, "changed_context", s.Formation[0].Treatment)
 }
 
 func TestLiveSubmissionDoesNotFollowRedirect(t *testing.T) {

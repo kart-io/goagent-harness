@@ -32,6 +32,7 @@ func run(ctx context.Context, args []string) error {
 	backend := f.String("backend", "plan", "plan、scripted 或 live")
 	model := f.String("model", os.Getenv("OPENAI_MODEL"), "形成与前台模型")
 	judge := f.String("judge-model", "", "独立判分模型，默认使用 -model")
+	f.IntVar(&c.CoreRunes, "core-runes", c.CoreRunes, "新布局允许钉住记录占用的字符数（0 排除所有钉住记录）")
 	f.IntVar(&c.Repeats, "repeats", c.Repeats, "独立重复次数")
 	if err := f.Parse(args); err != nil {
 		return err
