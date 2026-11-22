@@ -113,7 +113,7 @@ func TestReadyLimitsAndAttemptsAcrossGenerations(t *testing.T) {
 	require.Equal(t, 2, v.Attempts[1].Generation)
 	s.Attempts[0].Status = "running"
 	v, e = Allocate(s, c, "r")
-	require.NoError(t, e)
+	require.Error(t, e)
 	require.Nil(t, v.Wave)
 	require.Len(t, v.Attempts, 1)
 }
@@ -154,4 +154,92 @@ func TestWaveSizeBoundIsAtomic(t *testing.T) {
 	require.Empty(t, v.Attempts)
 	require.Nil(t, v.Wave)
 	require.Zero(t, v.Waves)
+}
+
+func TestMissingWaveWithPendingWriteRequiresRecovery(t *testing.T) {
+	for _, n := range []int{1, 2} {
+		s, c, a := allocationFixture(t)
+		c.Members[0].EffectClass = "write"
+		c.Members[0].Claims = []ResourceClaim{{"file", "write"}}
+		if n == 2 {
+			a.ID = "t-000002"
+			s.Plan.Tasks = append(s.Plan.Tasks, a)
+		}
+		w, e := Allocate(s, c, "r")
+		require.NoError(t, e)
+		replay, e := Allocate(w, c, "r")
+		require.NoError(t, e)
+		require.Equal(t, w, replay)
+		w.Wave = nil
+		before := w.Clone()
+		got, e := Allocate(w, c, "r")
+		require.Error(t, e)
+		require.Equal(t, before, got)
+		require.Equal(t, before, w)
+	}
+}
+func TestAcceptedRejectsOrphanArtifact(t *testing.T) {
+	s, c, _ := allocationFixture(t)
+	w, e := Allocate(s, c, "r")
+	require.NoError(t, e)
+	done := acceptWave(t, w, c)
+	orphan := done.Accepted[0].clone()
+	orphan.ID += "orphan"
+	done.Accepted = append(done.Accepted, orphan)
+	before := done.Clone()
+	got, e := Allocate(done, c, "r")
+	require.Error(t, e)
+	require.Equal(t, before, got)
+	require.Equal(t, before, done)
+}
+func TestAcceptedRechecksFrozenOutputLimit(t *testing.T) {
+	s, c, _ := allocationFixture(t)
+	s.Plan.Tasks[0].Outputs[0].MaxBytes = 1
+	w, e := Allocate(s, c, "r")
+	require.NoError(t, e)
+	done := acceptWave(t, w, c)
+	at := &done.Attempts[0]
+	v := &at.Result.Artifacts[0]
+	v.Content = []byte("11")
+	v.Digest, e = artifactDigest(*v)
+	require.NoError(t, e)
+	done.Accepted[0] = v.clone()
+	at.Review.SubjectDigest, e = TaskReviewDigest(*at)
+	require.NoError(t, e)
+	before := done.Clone()
+	got, e := Allocate(done, c, "r")
+	require.Error(t, e)
+	require.Equal(t, before, got)
+	require.Equal(t, before, done)
+}
+func TestFinalReviewEnforcesWriteFreeze(t *testing.T) {
+	s, c, a := allocationFixture(t)
+	c.Members[0].EffectClass = "write"
+	c.Members[0].Claims = []ResourceClaim{{"file", "write"}}
+	w, e := Allocate(s, c, "r")
+	require.NoError(t, e)
+	done := acceptWave(t, w, c)
+	for _, mode := range []string{"valid", "contract", "output"} {
+		t.Run(mode, func(t *testing.T) {
+			state := done.Clone()
+			switch mode {
+			case "contract":
+				state.WriteFreeze.ContractDigest = "changed"
+			case "output":
+				state.WriteFreeze.KnownOutputs = []FrozenOutput{{a.ID, "out", "changed"}}
+			}
+			before := state.Clone()
+			got, e := Allocate(state, c, "r")
+			require.NoError(t, e)
+			require.Equal(t, before, state)
+			if mode == "valid" {
+				require.Equal(t, "final_review", got.PendingAction)
+				require.Equal(t, []FrozenOutput{{a.ID, "out", state.Accepted[0].Digest}}, got.WriteFreeze.KnownOutputs)
+			} else {
+				require.NotNil(t, got.Outcome)
+				require.Equal(t, "blocked", got.Outcome.Status)
+				require.Equal(t, "stop", got.PendingAction)
+			}
+		})
+	}
 }

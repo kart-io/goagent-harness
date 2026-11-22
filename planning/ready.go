@@ -2,6 +2,8 @@ package planning
 
 import (
 	"cmp"
+	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -111,6 +113,13 @@ func currentAccepted(s State, c Config) (map[string]Attempt, error) {
 				return nil, invalid("任务%q验收记录不符", t.ID)
 			}
 			frozen.AttemptKey = a.ExecutionKey
+			validated, err := ValidateTaskResult(frozen, *a.Result, c)
+			if err != nil {
+				return nil, err
+			}
+			if validated.Outcome != "produced" || !reflect.DeepEqual(validated, *a.Result) {
+				return nil, invalid("任务%q已验收结果与冻结契约不符", t.ID)
+			}
 			subject, err := TaskReviewDigest(a)
 			if err != nil {
 				return nil, err
@@ -128,6 +137,7 @@ func currentAccepted(s State, c Config) (map[string]Attempt, error) {
 				if e != nil || d != v.Digest {
 					return nil, invalid("验收产物%q正文不符", v.ID)
 				}
+				delete(index, v.ID)
 			}
 			accepted[t.ID] = a
 			delete(pending, t.ID)
@@ -135,6 +145,9 @@ func currentAccepted(s State, c Config) (map[string]Attempt, error) {
 		if len(pending) == before {
 			return nil, invalid("验收任务缺少已验收上游")
 		}
+	}
+	if len(index) != 0 {
+		return nil, invalid("存在不属于当前验收尝试的产物")
 	}
 	return accepted, nil
 }
@@ -201,12 +214,27 @@ func Allocate(state State, c Config, root string) (State, error) {
 		return state, err
 	}
 	s := state.Clone()
-	if s.Wave != nil || s.Outcome != nil {
+	if s.Wave != nil {
+		return s, nil
+	}
+	for id, h := range histories {
+		if h.pending {
+			return state, fmt.Errorf("任务 %q 有未决尝试但缺少已冻结批次，需要恢复执行检查点", id)
+		}
+	}
+	if s.Outcome != nil {
 		return s, nil
 	}
 	accepted, err := currentAccepted(s, c)
 	if err != nil {
 		return state, err
+	}
+	if s.WriteFreeze != nil {
+		refreshed, err := buildWriteFreeze(s, c, accepted)
+		if err != nil {
+			return blocked(state.Clone(), err.Error()), nil
+		}
+		s.WriteFreeze = refreshed
 	}
 	if len(accepted) == len(s.Plan.Tasks) {
 		s.PendingAction = "final_review"
@@ -222,7 +250,7 @@ func Allocate(state State, c Config, root string) (State, error) {
 	members := memberDirectory(c)
 	used := map[string]string{}
 	wave := Wave{Number: s.Waves + 1, PlanRevision: s.Plan.Revision}
-	needsFreeze := s.WriteFreeze != nil
+	needsFreeze := false
 	for _, t := range tasks {
 		if len(wave.Assignments) >= c.Parallelism || len(s.Attempts) >= c.MaxTaskAttempts*c.MaxTasks {
 			break
@@ -255,7 +283,7 @@ func Allocate(state State, c Config, root string) (State, error) {
 	if len(wave.Assignments) == 0 {
 		return blocked(s, "没有可分配任务：依赖未验收、尝试未决或尝试额度耗尽"), nil
 	}
-	if needsFreeze {
+	if needsFreeze && s.WriteFreeze == nil {
 		freeze, err := buildWriteFreeze(s, c, accepted)
 		if err != nil {
 			return blocked(state.Clone(), err.Error()), nil
