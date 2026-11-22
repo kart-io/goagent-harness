@@ -1,0 +1,157 @@
+package planning
+
+import (
+	"github.com/stretchr/testify/require"
+	"testing"
+)
+
+func TestConflictingWritesDoNotShareWave(t *testing.T) {
+	s, c, a := allocationFixture(t)
+	c.Members[0].EffectClass = "write"
+	c.Members[0].Claims = []ResourceClaim{{"file", "write"}}
+	b := a.clone()
+	b.ID = "t-000002"
+	b.Priority = 10
+	s.Plan.Tasks = append(s.Plan.Tasks, b)
+	n, e := Allocate(s, c, "root")
+	require.NoError(t, e)
+	require.Len(t, n.Wave.Assignments, 1)
+	require.Equal(t, b.ID, n.Wave.Assignments[0].Task.ID)
+	require.NotNil(t, n.WriteFreeze)
+	require.Equal(t, 1, n.Waves)
+}
+func TestAssignmentPreservesGoalConstraintsWithoutExtraSources(t *testing.T) {
+	s, c, _ := allocationFixture(t)
+	n, e := Allocate(s, c, "r")
+	require.NoError(t, e)
+	a := n.Wave.Assignments[0]
+	require.Equal(t, s.Goal.Constraints, a.GoalContext.Constraints)
+	require.Len(t, a.GoalInputs, 1)
+	require.Equal(t, "a", a.GoalInputs[0].ID)
+	a.GoalInputs[0].Content[0] = '9'
+	a.GoalContext.Constraints[0].Rule = "changed"
+	require.Equal(t, "1", string(n.Goal.Inputs[0].Content))
+	require.Equal(t, "仅草稿", s.Goal.Constraints[0].Rule)
+}
+
+func acceptWave(t *testing.T, s State, cfg Config) State {
+	t.Helper()
+	for _, a := range s.Wave.Assignments {
+		r, e := ValidateTaskResult(a, TaskResult{TaskID: a.Task.ID, AttemptKey: a.AttemptKey, Outcome: "produced", Artifacts: []Artifact{{Name: "out", MediaType: "application/json", Content: []byte("1")}}}, cfg)
+		require.NoError(t, e)
+		require.Equal(t, "produced", r.Outcome)
+		for i := range s.Attempts {
+			at := &s.Attempts[i]
+			if at.ExecutionKey != a.AttemptKey {
+				continue
+			}
+			at.Status = "accepted"
+			at.Result = &r
+			d, e := TaskReviewDigest(*at)
+			require.NoError(t, e)
+			at.Review = &Review{Verdict: "accept", SubjectDigest: d, Reason: "符合要求", Criteria: []CriterionResult{{CriterionID: "local", Status: "pass"}}}
+		}
+		s.Accepted = append(s.Accepted, cloneSlice(r.Artifacts, Artifact.clone)...)
+	}
+	s.Wave = nil
+	return s
+}
+func TestReadyRequiresAcceptedDependencyAndIntactArtifact(t *testing.T) {
+	s, c, a := allocationFixture(t)
+	b := a.clone()
+	b.ID = "t-000002"
+	b.DependsOn = []string{a.ID}
+	b.Inputs = []InputRef{{a.ID, "out"}}
+	b.Priority = 100
+	s.Plan.Tasks = append(s.Plan.Tasks, b)
+	w, err := Allocate(s, c, "r")
+	require.NoError(t, err)
+	require.Len(t, w.Wave.Assignments, 1)
+	require.Equal(t, a.ID, w.Wave.Assignments[0].Task.ID)
+	accepted := acceptWave(t, w, c)
+	next, err := Allocate(accepted, c, "r")
+	require.NoError(t, err)
+	require.Len(t, next.Wave.Assignments, 1)
+	require.Equal(t, b.ID, next.Wave.Assignments[0].Task.ID)
+	require.Equal(t, accepted.Accepted[0], next.Wave.Assignments[0].Inputs[0].Artifact)
+	for _, corrupt := range []func(*State){func(s *State) { s.Accepted[0].Content = []byte("2") }, func(s *State) { s.Attempts[0].Result.Artifacts[0].Content = []byte("2") }, func(s *State) { s.Attempts[0].Review.Verdict = "block" }, func(s *State) { s.Attempts[0].Review.SubjectDigest = "stale" }} {
+		bad := accepted.Clone()
+		corrupt(&bad)
+		before := bad.Clone()
+		out, e := Allocate(bad, c, "r")
+		require.Error(t, e)
+		require.Equal(t, before, out)
+		require.Equal(t, before, bad)
+	}
+	done := acceptWave(t, next, c)
+	done, err = Allocate(done, c, "r")
+	require.NoError(t, err)
+	require.Equal(t, "final_review", done.PendingAction)
+}
+func TestReadyLimitsAndAttemptsAcrossGenerations(t *testing.T) {
+	s, c, _ := allocationFixture(t)
+	s, err := Allocate(s, c, "r")
+	require.NoError(t, err)
+	s.Wave = nil
+	s.Attempts[0].Status = "rejected"
+	s.Plan.Tasks[0].Generation++
+	for _, cap := range []string{"wave", "task"} {
+		limited := c
+		if cap == "wave" {
+			limited.MaxWaves = 1
+		} else {
+			limited.MaxTaskAttempts = 1
+		}
+		v, e := Allocate(s, limited, "r")
+		require.NoError(t, e)
+		require.Equal(t, "blocked", v.Outcome.Status)
+		require.Len(t, v.Attempts, 1)
+	}
+	v, e := Allocate(s, c, "r")
+	require.NoError(t, e)
+	require.Equal(t, 2, v.Attempts[1].Number)
+	require.Equal(t, 2, v.Attempts[1].Generation)
+	s.Attempts[0].Status = "running"
+	v, e = Allocate(s, c, "r")
+	require.NoError(t, e)
+	require.Nil(t, v.Wave)
+	require.Len(t, v.Attempts, 1)
+}
+func TestFreezeRecordsKnownInputsAndBlocksContractChange(t *testing.T) {
+	s, c, a := allocationFixture(t)
+	writer := c.Members[0]
+	writer.ID = "writer"
+	writer.EffectClass = "write"
+	writer.Claims = []ResourceClaim{{"file", "write"}}
+	c.Members = append(c.Members, writer)
+	b := a.clone()
+	b.ID = "t-000002"
+	b.MemberID = writer.ID
+	b.DependsOn = []string{a.ID}
+	b.Inputs = []InputRef{{a.ID, "out"}}
+	s.Plan.Tasks = append(s.Plan.Tasks, b)
+	first, e := Allocate(s, c, "r")
+	require.NoError(t, e)
+	require.Nil(t, first.WriteFreeze)
+	upstream := acceptWave(t, first, c)
+	v, e := Allocate(upstream, c, "r")
+	require.NoError(t, e)
+	require.Equal(t, []FrozenOutput{{a.ID, "out", upstream.Accepted[0].Digest}}, v.WriteFreeze.KnownOutputs)
+	upstream.WriteFreeze = v.WriteFreeze
+	upstream.Plan.Tasks[1].Instruction += "改写"
+	blocked, e := Allocate(upstream, c, "r")
+	require.NoError(t, e)
+	require.Nil(t, blocked.Wave)
+	require.Equal(t, "blocked", blocked.Outcome.Status)
+	require.Len(t, blocked.Attempts, 1)
+}
+func TestWaveSizeBoundIsAtomic(t *testing.T) {
+	s, c, _ := allocationFixture(t)
+	c.MaxStateBytes = 64
+	v, e := Allocate(s, c, "root")
+	require.NoError(t, e)
+	require.Equal(t, "blocked", v.Outcome.Status)
+	require.Empty(t, v.Attempts)
+	require.Nil(t, v.Wave)
+	require.Zero(t, v.Waves)
+}
