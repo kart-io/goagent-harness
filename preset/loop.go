@@ -67,6 +67,6 @@ func Configure[S core.State](b *builder.AgentBuilder[S], asm *Assembly) *builder
 	return b.WithSystemPrompt(asm.SystemPrompt).WithTools(asm.Tools...).
 		WithPreStep(l.PreStep...).WithRequestHook(l.Request...).WithTurnStopping(l.TurnStopping...).
 		WithPromptSections(l.PromptSections...).WithPromptContexts(l.PromptContexts...).
-		WithRequestError(0, append(slices.Clone(l.RequestError), builder.RetryTransient(transientRetries, nil))...).
+		WithRequestError(transientRetries, append(slices.Clone(l.RequestError), builder.RetryTransient(transientRetries, nil))...).
 		WithToolErrorFeedback()
 }
