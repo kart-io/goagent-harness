@@ -3,13 +3,19 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
+	p "github.com/kart-io/goagent-harness/planning"
 	"github.com/kart-io/goagent/builder"
+	"github.com/kart-io/goagent/core/budget"
 	"github.com/kart-io/goagent/core/durable"
 	"github.com/kart-io/goagent/core/session"
 	agentErrors "github.com/kart-io/goagent/errors"
@@ -122,4 +128,154 @@ func TestMemoryV4PreservesLegacyPlainPlanningReplay(t *testing.T) {
 			require.Len(t, client.Requests(), 1)
 		})
 	}
+}
+
+func jointWindow(t *testing.T, fs durable.Store, root string, max int) *memory.BackgroundConfig {
+	t.Helper()
+	ctrl, err := budget.NewDurable(budget.Config{Version: "1", RootKey: root, MaxModelRequests: max, MaxReservedTokens: 65536, TokenPolicyVersion: "1"}, fs)
+	require.NoError(t, err)
+	return &memory.BackgroundConfig{Budget: ctrl, MaxInputRunes: 10000, MaxOutputRunes: 1000, MaxOutputTokens: 32, MaxDerivationsPerPass: 1, EstimatorVersion: "1", EstimateChat: func(*llm.CompletionRequest) (int, error) { return 64, nil }, EstimateEmbedding: func(string) (int, error) { return 8, nil }, SingleRequestClients: true}
+}
+
+type jointEmbeddings struct {
+	online, background           *budget.Controller
+	onlineCalls, backgroundCalls atomic.Int32
+}
+
+func (e *jointEmbeddings) Embed(ctx context.Context, text string) ([]float32, error) {
+	if text == "" {
+		return nil, errors.New("嵌入输入为空")
+	}
+	if c, ok := budget.FromContext(ctx); ok && c == e.background {
+		e.backgroundCalls.Add(1)
+	} else {
+		if err := e.online.ReserveAttributed(ctx, "embed/"+uuid.NewString(), 8, nil); err != nil {
+			return nil, err
+		}
+		e.onlineCalls.Add(1)
+	}
+	return []float32{1, 0}, nil
+}
+
+func TestPlanningAndMaintenanceBudgetsAreIndependent(t *testing.T) {
+	dir := t.TempDir()
+	h := openJointHost(t, dir)
+	fs, e := durable.NewFileStore(dir + "/memory")
+	require.NoError(t, e)
+	window := jointWindow(t, h.journal, "maintenance", 10)
+	online := jointWindow(t, h.journal, "online", 3).Budget
+	embed := &jointEmbeddings{online: online, background: window.Budget}
+	chat := mocks.NewScriptedClient(mocks.TextReply("经历反思", `{"insights":[{"content":"烘焙影响咖啡口味"}]}`))
+	mem, e := memory.New(memory.Config{Durable: fs, Index: memory.NewMemoryIndex(), EmbedModel: "local", Embedder: embed, Model: chat, Sessions: h.log, Background: window, ReflectionThreshold: .5})
+	require.NoError(t, e)
+	h.mem = mem
+	_, e = mem.Remember(h.ctx, memory.Record{ID: "episode", Kind: memory.KindEpisode, Content: "编写咖啡报告的经历", Importance: 1})
+	require.NoError(t, e)
+	writes := embed.onlineCalls.Load()
+	require.Positive(t, writes)
+	_, e = mem.ProcessPending(h.ctx)
+	require.NoError(t, e)
+	require.Len(t, chat.Requests(), 1)
+	require.Positive(t, embed.backgroundCalls.Load())
+	require.Equal(t, writes, embed.onlineCalls.Load())
+	s, _, task := jointFixture(t)
+	pc := jointPlanClient(t, task)
+	role, e := p.NewAgentPlanner(h.role("planner", pc))
+	require.NoError(t, e)
+	_, e = role.Plan(durable.WithExecutionKey(h.ctx, "plan-node"), p.PlanningInput{Goal: s.Goal})
+	require.NoError(t, e)
+	require.Len(t, pc.Requests(), 1)
+	require.Contains(t, jointJSON(t, pc.Requests()[0].Messages), "编写咖啡报告的经历")
+	require.Greater(t, embed.onlineCalls.Load(), writes)
+	// 将在线窗口耗尽后，后台仍有额度，额外调用必须在客户端前被拒绝。
+	for i := int(embed.onlineCalls.Load()); i < online.Configuration().MaxModelRequests; i++ {
+		_, err := embed.Embed(h.ctx, "补充咖啡查询")
+		require.NoError(t, err)
+	}
+	prior := embed.onlineCalls.Load()
+	_, e = embed.Embed(h.ctx, "超过在线额度")
+	require.ErrorIs(t, e, agentErrors.ErrModelBudgetExceeded)
+	require.Equal(t, prior, embed.onlineCalls.Load())
+	require.Less(t, chat.Calls()+int(embed.backgroundCalls.Load()), window.Budget.Configuration().MaxModelRequests)
+	for _, pair := range []struct {
+		c *budget.Controller
+		n int
+	}{{h.controller, pc.Calls()}, {online, int(embed.onlineCalls.Load())}, {window.Budget, chat.Calls() + int(embed.backgroundCalls.Load())}} {
+		reopened, e := budget.NewDurable(pair.c.Configuration(), h.journal)
+		require.NoError(t, e)
+		snap, e := reopened.Snapshot(h.ctx)
+		require.NoError(t, e)
+		require.Equal(t, pair.n, snap.ReservedRequests)
+		if pair.c == online {
+			require.Equal(t, pair.n, snap.UnknownUsageEntries)
+			require.Equal(t, 8*pair.n, snap.ReservedTokens)
+		}
+	}
+}
+
+func TestMaintenanceWindowChangeDoesNotResetFailureAttempts(t *testing.T) {
+	dir := t.TempDir()
+	h := openJointHost(t, dir)
+	fs, e := durable.NewFileStore(dir + "/maintenance-memory")
+	require.NoError(t, e)
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	fail := mocks.ScriptedRule{Name: "模型技术故障", Respond: func(context.Context, *llm.CompletionRequest) (mocks.ScriptedReply, error) {
+		return mocks.ScriptedReply{}, errors.New("维护客户端失败")
+	}}
+	client := mocks.NewScriptedClient(fail, fail, fail, fail, fail, fail)
+	open := func(root string) (*memory.Memory, *budget.Controller) {
+		w := jointWindow(t, h.journal, root, 20)
+		m, e := memory.New(memory.Config{Durable: fs, Model: client, Sessions: h.log, Background: w, ReflectionThreshold: .5, Now: func() time.Time { return now }})
+		require.NoError(t, e)
+		return m, w.Budget
+	}
+	m, first := open("first")
+	_, e = m.Remember(h.ctx, memory.Record{ID: "e", Kind: memory.KindEpisode, Content: "一次咖啡经历", Importance: 1})
+	require.NoError(t, e)
+	effectCtx := durable.WithExecutionKey(h.ctx, "write-attempt")
+	writes := 0
+	write := func() error {
+		_, e := durable.Do(effectCtx, "publish", []byte("{}"), durable.OperationPolicy{MaxAttempts: 1}, func(context.Context) (json.RawMessage, error) { writes++; return nil, agentErrors.ErrEffectUnknown })
+		return e
+	}
+	require.Error(t, write())
+	require.Equal(t, 1, writes)
+	// 先真实消费前台请求，再比较两个维护窗口均未修改其账本。
+	s, _, task := jointFixture(t)
+	pc := jointPlanClient(t, task)
+	role, e := p.NewAgentPlanner(h.role("planner", pc))
+	require.NoError(t, e)
+	_, e = role.Plan(durable.WithExecutionKey(h.ctx, "foreground"), p.PlanningInput{Goal: s.Goal})
+	require.NoError(t, e)
+	require.Len(t, pc.Requests(), 1)
+	fg, e := h.controller.Snapshot(h.ctx)
+	require.NoError(t, e)
+	require.Equal(t, 1, fg.ReservedRequests)
+	for i := 1; i <= 5; i++ {
+		_, e = m.ProcessPending(h.ctx)
+		require.Error(t, e, "第%d次", i)
+		require.Equal(t, i, client.Calls())
+		_, e = m.ProcessPending(h.ctx)
+		require.NoError(t, e)
+		require.Equal(t, i, client.Calls())
+		now = now.Add(time.Second << uint(i-1))
+	}
+	m, second := open("second")
+	now = now.Add(30 * 24 * time.Hour)
+	_, e = m.ProcessPending(h.ctx)
+	require.NoError(t, e)
+	require.Equal(t, 5, client.Calls())
+	for _, v := range []struct {
+		c     *budget.Controller
+		count int
+	}{{first, 5}, {second, 0}} {
+		snap, e := v.c.Snapshot(h.ctx)
+		require.NoError(t, e)
+		require.Equal(t, v.count, snap.ReservedRequests, v.c.Configuration().RootKey)
+	}
+	after, e := h.controller.Snapshot(h.ctx)
+	require.NoError(t, e)
+	require.Equal(t, fg, after)
+	require.ErrorIs(t, write(), agentErrors.ErrOperationAttention)
+	require.Equal(t, 1, writes)
 }
