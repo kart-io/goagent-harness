@@ -9,8 +9,13 @@ import (
 	"github.com/kart-io/goagent/llm"
 	"github.com/kart-io/goagent/testing/mocks"
 	"github.com/stretchr/testify/require"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestLiveDirectAndAdmission(t *testing.T) {
@@ -90,7 +95,7 @@ func TestLivePlanningRolesUseSharedLedger(t *testing.T) {
 	}
 }
 
-// brokenStream emits one partial response before failing, without usage evidence.
+// 返回部分回复后中断，供应商未提供用量。
 type brokenStream struct{ *mocks.ScriptedClient }
 
 func (b brokenStream) CompleteStream(context.Context, *llm.CompletionRequest) (<-chan *llm.StreamChunk, error) {
@@ -156,4 +161,53 @@ func TestLiveManifestMatchesActualConfiguration(t *testing.T) {
 	require.NoError(t, err)
 	require.Error(t, validate(d, offline, host))
 	require.Zero(t, client.Calls())
+}
+
+func TestLiveRejectsRedirectBeforeSecondPOST(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "local-fixture")
+	var initial, redirected atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("unexpected method %s", r.Method)
+		}
+		if r.URL.Path == "/chat/completions" {
+			initial.Add(1)
+			http.Redirect(w, r, "/redirect/chat/completions", http.StatusTemporaryRedirect)
+			return
+		}
+		redirected.Add(1)
+		http.Error(w, "unexpected redirect", http.StatusBadRequest)
+	}))
+	defer server.Close()
+	client, err := NewLiveOpenAIClient("fixture", 0, server.URL)
+	require.NoError(t, err)
+	e := Live{Client: client, Root: t.TempDir(), Model: "fixture"}
+	d := frozen(t)
+	trial := Trial{Variant: variants[0], RunID: "run", Namespace: "ns", Limits: Limits{1, 32768, 8192}}
+	row := execute(t.Context(), d.Cases[0], trial, e)
+	require.Contains(t, []string{"budget_exhausted", "failed"}, row.Status)
+	require.EqualValues(t, 1, initial.Load())
+	require.EqualValues(t, 0, redirected.Load())
+	require.Equal(t, Measurement{PhysicalRequests: 1, LedgerRequests: 1, UnknownUsageCalls: 1, UnknownCostCalls: 1}, row.Costs.Foreground)
+}
+
+func TestLiveCancellationRetainsUnknownUsage(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "local-fixture")
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		requests.Add(1)
+		cancel()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	client, err := NewLiveOpenAIClient("fixture", 0, server.URL)
+	require.NoError(t, err)
+	host := Live{Client: client, Root: t.TempDir(), Model: "fixture"}
+	row := execute(ctx, frozen(t).Cases[0], Trial{Variant: variants[0], RunID: "run", Namespace: "ns", Limits: sharedLimits()}, host)
+	require.Equal(t, "failed", row.Status)
+	require.EqualValues(t, 1, requests.Load())
+	require.Equal(t, Measurement{PhysicalRequests: 1, LedgerRequests: 1, UnknownUsageCalls: 1, UnknownCostCalls: 1}, row.Costs.Foreground)
 }

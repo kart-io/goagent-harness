@@ -9,8 +9,6 @@ import (
 	"path/filepath"
 
 	"github.com/kart-io/goagent-harness/examples/planning-agent/internal/eval"
-	"github.com/kart-io/goagent/llm"
-	"github.com/kart-io/goagent/llm/providers"
 )
 
 func main() {
@@ -48,11 +46,7 @@ func run(args []string) error {
 		if *model == "" {
 			return fmt.Errorf("live 需要 -model 或 OPENAI_MODEL")
 		}
-		opts := []llm.ClientOption{llm.WithModel(*model), llm.WithTemperature(*temperature)}
-		if *baseURL != "" {
-			opts = append(opts, llm.WithBaseURL(*baseURL))
-		}
-		client, err := providers.NewOpenAIWithOptions(opts...)
+		client, err := eval.NewLiveOpenAIClient(*model, *temperature, *baseURL)
 		if err != nil {
 			return err
 		}

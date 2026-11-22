@@ -20,7 +20,7 @@ func (t liveTrial) role(role, prompt string) p.AgentConfig {
 		if err != nil {
 			return owned, err
 		}
-		owned.Runnable = a.AsRunnable()
+		owned.Runnable = liveRunnable(a)
 		owned.Close = a.Shutdown
 		return owned, nil
 	}}
@@ -95,15 +95,15 @@ func (t liveTrial) plan(ctx context.Context, store durable.Store, slots int) (st
 	}
 	outcome := snap.State.Outcome
 	if outcome == nil {
-		return "", fmt.Errorf("planning ended without outcome")
+		return "", fmt.Errorf("规划运行结束时缺少结果")
 	}
 	if outcome.Status != "succeeded" {
-		return "", fmt.Errorf("planning %s: %s", outcome.Status, outcome.Reason)
+		return "", fmt.Errorf("规划状态 %s：%s", outcome.Status, outcome.Reason)
 	}
 	for _, a := range snap.State.Accepted {
 		if a.DeliverableID == "answer" {
 			return string(a.Content), nil
 		}
 	}
-	return "", fmt.Errorf("missing accepted answer")
+	return "", fmt.Errorf("缺少已验收的答案")
 }

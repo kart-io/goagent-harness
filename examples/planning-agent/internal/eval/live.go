@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,12 +15,14 @@ import (
 	"sync/atomic"
 
 	"github.com/kart-io/goagent/builder"
+	"github.com/kart-io/goagent/core"
 	"github.com/kart-io/goagent/core/budget"
 	"github.com/kart-io/goagent/core/durable"
 	agenterrors "github.com/kart-io/goagent/errors"
 	"github.com/kart-io/goagent/execution"
 	"github.com/kart-io/goagent/interfaces"
 	"github.com/kart-io/goagent/llm"
+	"github.com/kart-io/goagent/llm/providers"
 	"github.com/kart-io/goagent/memory"
 )
 
@@ -28,6 +32,9 @@ const answerContract = "Return only a JSON object with facts (object), evidence 
 
 // Live runs independent trials against the configured provider.
 type Live struct {
+	// Client must send at most one physical model request per CompleteStream call.
+	// Disable transport redirects, internal retries and request splitting. Builder
+	// owns any retry so that each new request has a separate ledger admission.
 	Client      llm.Client
 	Root, Model string
 	Temperature float64
@@ -60,7 +67,7 @@ func (t liveTrial) agent(role, prompt string) (*builder.SimpleAgent, error) {
 
 func (t liveTrial) estimate(_ context.Context, req *llm.CompletionRequest, tools []interfaces.Tool) (int, error) {
 	if len(tools) != 0 || req.MaxTokens <= 0 {
-		return 0, fmt.Errorf("expected bounded text-only request")
+		return 0, fmt.Errorf("仅支持设置了输出上限的纯文本请求")
 	}
 	actual := *req
 	actual.Model = t.client.model
@@ -68,12 +75,41 @@ func (t liveTrial) estimate(_ context.Context, req *llm.CompletionRequest, tools
 	if err != nil {
 		return 0, err
 	}
-	// One token per UTF-8 byte plus per-message framing and reserved output.
+	// 每个 UTF-8 字节按一个 token 估算，再加消息封装开销与预留输出。
 	n := len(data) + 16*(1+len(actual.Messages)) + req.MaxTokens
 	if n > t.input.Limits.ContextTokens {
-		return 0, fmt.Errorf("context estimate %d: %w", n, agenterrors.ErrModelBudgetExceeded)
+		return 0, fmt.Errorf("估算上下文用量为 %d：%w", n, agenterrors.ErrModelBudgetExceeded)
 	}
 	return n, nil
+}
+
+// 取消后仍等到 Builder 关闭事件流，确保模型用量与日志已写完再读取账本。
+func liveRunnable(a *builder.SimpleAgent) core.Runnable[any, *builder.AgentOutput] {
+	return core.NewRunnableFunc(func(ctx context.Context, input any) (*builder.AgentOutput, error) {
+		events, err := a.ExecuteStream(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		var out *builder.AgentOutput
+		for event := range events {
+			if event.Error != nil {
+				err = event.Error
+			}
+			if event.Type == "done" {
+				out = event.Output
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+		if err = ctx.Err(); err != nil {
+			return nil, err
+		}
+		if out == nil {
+			return nil, io.ErrUnexpectedEOF
+		}
+		return out, nil
+	})
 }
 
 func (t liveTrial) ask(ctx context.Context, role, prompt string, input any) (answer string, err error) {
@@ -86,13 +122,13 @@ func (t liveTrial) ask(ctx context.Context, role, prompt string, input any) (ans
 		return "", err
 	}
 	defer func() { err = errors.Join(err, a.Shutdown(context.WithoutCancel(ctx))) }()
-	out, err := a.AsRunnable().Invoke(ctx, string(data))
+	out, err := liveRunnable(a).Invoke(ctx, string(data))
 	if err != nil {
 		return "", err
 	}
 	answer, ok := out.Result.(string)
 	if !ok {
-		return "", fmt.Errorf("%s returned non-text output", role)
+		return "", fmt.Errorf("角色 %s 返回了非文本输出", role)
 	}
 	return answer, nil
 }
@@ -103,11 +139,11 @@ func (e Live) Run(ctx context.Context, v Variant, input Input) (obs Observation,
 	}
 	if input.RunID == "" || !filepath.IsLocal(input.Namespace) ||
 		filepath.Base(input.Namespace) != input.Namespace || input.Namespace == "." {
-		return obs, fmt.Errorf("invalid trial identity")
+		return obs, fmt.Errorf("试验运行标识或命名空间无效")
 	}
 	if !slices.Contains(variants[:], v) || input.Limits.Requests <= 0 ||
 		input.Limits.Tokens <= 0 || input.Limits.ContextTokens <= 0 {
-		return obs, fmt.Errorf("invalid trial variant or resource limits")
+		return obs, fmt.Errorf("试验组别或资源上限无效")
 	}
 	if err = os.MkdirAll(e.Root, 0700); err != nil {
 		return
@@ -160,7 +196,7 @@ func (e Live) Run(ctx context.Context, v Variant, input Input) (obs Observation,
 	}
 	err = errors.Join(err, readErr)
 	if readErr == nil && physical != ledger.Root.ReservedRequests {
-		err = errors.Join(err, fmt.Errorf("physical calls %d differ from ledger %d", physical, ledger.Root.ReservedRequests))
+		err = errors.Join(err, fmt.Errorf("物理调用次数 %d 与账本计数 %d 不一致", physical, ledger.Root.ReservedRequests))
 	}
 	switch {
 	case errors.Is(err, agenterrors.ErrModelBudgetExceeded):
@@ -177,10 +213,10 @@ func (e Live) Run(ctx context.Context, v Variant, input Input) (obs Observation,
 
 func (e Live) validateConfig() error {
 	if e.Client == nil || e.Root == "" || strings.TrimSpace(e.Model) == "" || e.Model == "offline-none" {
-		return fmt.Errorf("missing live model, client or state directory")
+		return fmt.Errorf("live 模式缺少模型、客户端或状态目录")
 	}
 	if math.IsNaN(e.Temperature) || e.Temperature < 0 || e.Temperature > 2 {
-		return fmt.Errorf("live temperature must be between zero and two")
+		return fmt.Errorf("live 模式的温度必须介于 0 和 2 之间")
 	}
 	return nil
 }
@@ -191,7 +227,19 @@ func (e Live) validateManifest(m Manifest) error {
 	}
 
 	if m.Backend != "live" || m.Model != e.Model || m.Temperature != e.Temperature || m.PromptVersion != LivePromptVersion {
-		return fmt.Errorf("manifest differs from live model configuration")
+		return fmt.Errorf("试验清单与 live 模型配置不匹配")
 	}
 	return nil
+}
+
+// NewLiveOpenAIClient builds the OpenAI-compatible client used by the live CLI.
+func NewLiveOpenAIClient(model string, temperature float64, baseURL string) (llm.Client, error) {
+	httpClient := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	opts := []llm.ClientOption{llm.WithModel(model), llm.WithTemperature(temperature), llm.WithHTTPClient(httpClient)}
+	if baseURL != "" {
+		opts = append(opts, llm.WithBaseURL(baseURL))
+	}
+	return providers.NewOpenAIWithOptions(opts...)
 }
