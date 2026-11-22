@@ -34,6 +34,8 @@ go run ./examples/planning-agent/cmd/eval -backend scripted -out ./eval-scripted
 
 显式传入 `-backend live -model MODEL -out ./eval-live-new` 使用已有OpenAI兼容provider。密钥通过 `OPENAI_API_KEY` 安全配置，`OPENAI_MODEL`、`OPENAI_BASE_URL` 提供可选默认，命令行可用 `-model`、`-base-url`、`-temperature` 覆盖非密钥设置。该模式会发起付费请求；每次试验持久状态隔离，物理请求对照各自根账本，规划/复核和重试均计费，未知用量/费用保留未知。该入口没有外部效果工具。确定性示例或scripted结果不能证明质量、耗时或成本收益。
 
+独立的[记忆布局比较](internal/memoryeval/README_CN.md)复用 `memory/memeval`：每份历史每轮只形成一次记忆，按预登记且仅依赖历史的规则钉住记录，再复制快照供nil布局与配额布局使用。报告布局是否实际改变提交的上下文，形成、回答和独立判分费用分开记录。入口为 `cmd/memory-eval`，默认后端同样只生成计划。
+
 ## 恢复等待中的运行
 
 ```sh

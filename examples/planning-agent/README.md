@@ -34,6 +34,8 @@ Each output directory must be new. `manifest.json` fixes trial identities and se
 
 An explicit `-backend live -model MODEL -out ./eval-live-new` uses the existing OpenAI-compatible provider. Configure `OPENAI_API_KEY` securely; `OPENAI_MODEL` and `OPENAI_BASE_URL` are optional defaults, with `-model`, `-base-url` and `-temperature` overrides. This mode makes paid requests. It creates isolated durable state per trial, counts physical requests against each root ledger, includes planner/reviewer calls and retries, and reports unknown usage/cost as unknown. It has no external-effect tools. Results from the deterministic examples or scripted backend cannot demonstrate quality, latency or cost improvements.
 
+The separate [memory layout comparison](internal/memoryeval/README.md) reuses `memory/memeval`. It forms memory once per history/repeat, applies a preregistered history-only pinned-record rule, and copies that snapshot for nil/quota layouts. It reports whether the layout actually changed submitted context, with formation, answering and judge costs separated. Use `cmd/memory-eval`; its default backend also only plans trials.
+
 ## Resume a waiting run
 
 ```sh
