@@ -2,8 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/kart-io/goagent/llm"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"github.com/kart-io/goagent-harness/examples/planning-agent/internal/memoryeval"
@@ -29,4 +33,23 @@ func TestDefaultPlanAndScriptedMultipleSessions(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &s))
 	require.Equal(t, 3, s.Completed)
 	require.Zero(t, s.Failed)
+}
+
+func TestLiveSubmissionDoesNotFollowRedirect(t *testing.T) {
+	var initial, target atomic.Int64
+	next := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { target.Add(1) }))
+	defer next.Close()
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		initial.Add(1)
+		http.Redirect(w, r, next.URL, http.StatusTemporaryRedirect)
+	}))
+	defer origin.Close()
+	t.Setenv("OPENAI_BASE_URL", origin.URL)
+	t.Setenv("OPENAI_API_KEY", "offline")
+	client, err := service("offline")
+	require.NoError(t, err)
+	_, err = llm.Chat(t.Context(), client, []llm.Message{llm.UserMessage("test")})
+	require.Error(t, err)
+	require.EqualValues(t, 1, initial.Load())
+	require.Zero(t, target.Load())
 }

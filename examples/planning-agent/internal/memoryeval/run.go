@@ -37,7 +37,7 @@ func DefaultConfig() Config {
 	return Config{3, 2048, 512, 32768, 1024, 12, 131072, "scripted", "scripted", "scripted"}
 }
 
-// Clients supplies host-configured single-attempt providers. Runner retries are metered.
+// Clients supplies host-configured single-attempt providers. Each submission must issue at most one physical request without internal retries, splitting, or redirects. Runner retries are metered separately.
 type Clients struct{ Formation, Foreground, Judge llm.Client }
 
 // Key identifies a preregistered question trial.

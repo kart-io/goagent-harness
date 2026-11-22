@@ -5,6 +5,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 
@@ -80,11 +81,11 @@ func run(ctx context.Context, args []string) error {
 		if *judge == "" {
 			*judge = *model
 		}
-		client, err := providers.NewOpenAIWithOptions(llm.WithModel(*model))
+		client, err := service(*model)
 		if err != nil {
 			return err
 		}
-		grader, err := providers.NewOpenAIWithOptions(llm.WithModel(*judge))
+		grader, err := service(*judge)
 		if err != nil {
 			return err
 		}
@@ -95,4 +96,8 @@ func run(ctx context.Context, args []string) error {
 	}
 	_, err = memoryeval.Run(ctx, *out, cases, c, cl)
 	return err
+}
+
+func service(model string) (llm.Client, error) {
+	return providers.NewOpenAIWithOptions(llm.WithModel(model), llm.WithHTTPClient(&http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}))
 }
