@@ -11,13 +11,14 @@ type reviewScope struct {
 	tasks     map[string]TaskSpec
 	results   map[string]TaskResult
 	artifacts map[string]Artifact
+	evidence  idSet
 	owners    map[string]string
 	criteria  []Criterion
 	visible   idSet
 }
 
 func inspectReview(in ReviewInput) (reviewScope, error) {
-	s := reviewScope{tasks: map[string]TaskSpec{}, results: map[string]TaskResult{}, artifacts: map[string]Artifact{}, owners: map[string]string{}, visible: idSet{}}
+	s := reviewScope{tasks: map[string]TaskSpec{}, results: map[string]TaskResult{}, artifacts: map[string]Artifact{}, owners: map[string]string{}, visible: idSet{}, evidence: idSet{}}
 	if !nonempty(in.SubjectDigest) || in.Final != (in.Assignment == nil) {
 		return s, invalid("审查对象无效")
 	}
@@ -37,6 +38,14 @@ func inspectReview(in ReviewInput) (reviewScope, error) {
 			s.visible[v.ID] = true
 		}
 		for _, v := range a.Inputs {
+			artifact := v.Artifact
+			if !slices.Contains(a.Task.Inputs, v.Ref) || !slices.Contains(a.Task.DependsOn, v.Ref.DependencyID) || artifact.Name != v.Ref.OutputName || !nonempty(artifact.ProducerAttemptKey) || artifact.ID != durable.ChildKey(artifact.ProducerAttemptKey, "artifact/"+artifact.Name) {
+				return s, invalid("受审输入产物与冻结引用不符")
+			}
+			digest, err := artifactDigest(artifact)
+			if err != nil || digest != artifact.Digest || !s.evidence.add(artifact.ID) {
+				return s, invalid("受审输入产物摘要无效或身份重复")
+			}
 			s.visible[v.Artifact.ID] = true
 			s.owners[v.Artifact.ID] = v.Ref.DependencyID
 		}
@@ -76,7 +85,7 @@ func inspectReview(in ReviewInput) (reviewScope, error) {
 					}
 				}
 			}
-			if _, ok := s.artifacts[a.ID]; ok {
+			if !s.evidence.add(a.ID) {
 				return s, invalid("受审产物ID重复")
 			}
 			s.artifacts[a.ID] = a
@@ -126,7 +135,7 @@ func ValidateReview(in ReviewInput, r Review) (Review, error) {
 			return Review{}, invalid("证据ID重复或为空")
 		}
 		for _, id := range c.EvidenceIDs {
-			if _, ok := s.artifacts[id]; !ok {
+			if !s.evidence[id] {
 				return Review{}, invalid("验收引用不可见产物%q", id)
 			}
 		}

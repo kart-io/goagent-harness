@@ -77,6 +77,9 @@ func checkRepair(in ReviewInput, r Review, s reviewScope) error {
 			}
 		}
 		for _, id := range issue.RelatedIDs {
+			if _, ok := s.results[id]; ok {
+				related[id] = true
+			}
 			if owner := s.owners[id]; owner != "" {
 				related[owner] = true
 			}
