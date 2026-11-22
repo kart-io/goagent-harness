@@ -121,36 +121,11 @@ func buildSubagent(ctx context.Context, a *Assembler, c *SubagentConfig) error {
 		a.AddTools(tool)
 	}
 	slot := a.cur
-	parentSandbox := Sandbox("")
-	var parentNetwork *bool
-	if a.opts.parent != nil {
-		parentSandbox = a.opts.parent.sandbox
-		parentNetwork = a.opts.parent.network
-	}
 	a.AfterPublish(func(parent *tools.Pipeline) error {
-		if a.workspace != nil {
-			if parentSandbox == "" || a.workspaceInfo.Sandbox.rank() < parentSandbox.rank() {
-				parentSandbox = a.workspaceInfo.Sandbox
-			}
-			network := a.workspaceInfo.Network
-			if parentNetwork != nil {
-				network = network && *parentNetwork
-			}
-			parentNetwork = &network
-		}
-		filter := c.ToolFilter
-		childHost := a.host
-		if childHost.AgentID == "" {
-			childHost.AgentID = a.preset.ID
-		}
-		childHost.AgentID += "/" + a.preset.Rows[slot].ID
+		childHost, options := a.childSettings(parent, target, a.preset.Rows[slot].ID, c.ToolFilter, isBackground)
 		if isBackground {
 			// 后台没有人在同步等待审批，占着槽位阻塞也没有意义。
 			childHost.Approver = deferredApprover{}
-		}
-		policy, ceiling, controller, envAllowlist := a.workspaceInfo.Policy, a.workspaceInfo.Ceiling, a.controller, a.workspaceInfo.EnvAllowlist
-		if a.workspace == nil && a.opts.parent != nil {
-			policy, ceiling, controller, envAllowlist = a.opts.parent.policy, a.opts.parent.ceiling, a.opts.parent.controller, a.opts.parent.envAllowlist
 		}
 		if isBackground {
 			tool.manager, tool.runner, tool.agentID = a.host.Background, childHost.AgentID+"/"+c.ToolName, childHost.AgentID
@@ -158,16 +133,6 @@ func buildSubagent(ctx context.Context, a *Assembler, c *SubagentConfig) error {
 		if isBackground && a.opts.childSandboxes != nil {
 			// Build 时已用模板登记 Runner：这一次只是某个 child 的运行，登记会覆盖它，也不能让内层依赖外层的这次运行。
 			return nil
-		}
-		scope := append(slices.Clone(a.opts.scope), a.preset.Rows[slot].ID, target.ID)
-		options := buildOptions{
-			depth: depth,
-			scope: scope,
-			parent: &parentScope{network: parentNetwork, pre: parent.Pre, guards: parent.Guards, sandbox: parentSandbox, denyApproval: a.denyApproval,
-				policy: policy, ceiling: ceiling, controller: controller, envAllowlist: envAllowlist},
-			filter:         &filter,
-			template:       a.opts.template || isBackground,
-			childSandboxes: a.opts.childSandboxes,
 		}
 		child, err := build(ctx, target, childHost, options)
 		if err != nil {
@@ -196,7 +161,7 @@ func buildSubagent(ctx context.Context, a *Assembler, c *SubagentConfig) error {
 			if child.perRun {
 				perRun := options
 				perRun.template = false
-				perRun.scope = append(slices.Clone(scope), task.ID)
+				perRun.scope = append(slices.Clone(options.scope), task.ID)
 				perRun.childSandboxes = &childSandboxes{manager: a.host.Background, childID: task.ID}
 				built, err := build(ctx, target, childHost, perRun)
 				if err != nil {

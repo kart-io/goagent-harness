@@ -15,6 +15,7 @@ import (
 
 	"github.com/kart-io/goagent-harness/background"
 	"github.com/kart-io/goagent-harness/permissions"
+	"github.com/kart-io/goagent-harness/planning"
 	"github.com/kart-io/goagent-harness/sandbox"
 	"github.com/kart-io/goagent-harness/tools/coding"
 	"github.com/kart-io/goagent/constants"
@@ -27,6 +28,10 @@ import (
 
 // Host 是宿主提供给 Build 的环境。模型、SessionID、持久化作用域与预算由宿主在 Builder 上配置。
 type Host struct {
+	// PlanningMembers declares the trusted member directory.
+	PlanningMembers []planning.Member
+	// PlanningAgentFactory opens a fresh agent for a frozen assignment.
+	PlanningAgentFactory PlanningAgentFactory
 	// AgentID is the trusted identity for session policy and approval. Empty uses the preset ID.
 	AgentID string
 	// SessionStore persists host-owned session mode/revision; nil is controller-local memory.
@@ -104,6 +109,7 @@ type WorkspaceInfo struct {
 
 // Assembler 收集组件的贡献。提示词段落、工具与钩子按组件在列表中的顺序排列，与初始化顺序无关。
 type Assembler struct {
+	planning *planningExecutor
 	host     Host
 	preset   *Resolved
 	cur      int
@@ -225,6 +231,7 @@ func (a *Assembler) Value(v Value) (string, error) {
 
 // Assembly 是 Build 的结果，用 Configure 交给 Builder。
 type Assembly struct {
+	planning     *planningExecutor
 	PresetID     string
 	SystemPrompt string
 	// Loop 是组件贡献的循环扩展点，只作用于原生工具流。
@@ -481,6 +488,7 @@ func (a *Assembler) publish(cfgs []any) (*Assembly, error) {
 		}
 	}
 	asm := &Assembly{
+		planning:     a.planning,
 		PresetID:     a.preset.ID,
 		SystemPrompt: strings.Join(prompts, "\n\n"),
 		Loop:         loop,
