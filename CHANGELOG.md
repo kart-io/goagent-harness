@@ -2,6 +2,11 @@
 
 ## 未发布
 
+- 新增实验性 `planning`：结构化目标与澄清、固定槽DAG执行、证据验收、有界重规划和持久恢复；默认单槽，资源与权限由宿主声明。
+- 新增 `planning-members` 和受信成员装配，保留journal与根预算，继承父权限及沙箱限制；本轮拒绝嵌套subagent和显式工具替代，效果未知时转核对而非重写。
+- 新增离线规划案例、预登记任务评估和记忆布局消融适配。离线通过只表示工程契约成立，不代表模型质量或成本收益。详见[规划指南](planning/README_CN.md)与[示例](examples/planning-agent/README_CN.md)。
+- 依赖声明升至GoAgent v0.60.0，并同步Steer/Followup与Builder接口；新增记忆API仍需配套核心源码联调，正式发布后的独立依赖验证另行完成。
+
 - 修复 SSH 集成测试的 runner 构建目标：显式构建 Linux 静态二进制，避免 macOS/Windows 宿主生成的程序在 Linux 测试容器中报 `Exec format error`；增加不依赖 Docker 的 ELF 目标回归。
 - 变更：`compaction` 的摘要请求改用 `llm.Chat(ctx, model, msgs)`，经模型的 `CompleteStream` 收集完整回答。需要 GoAgent 收敛后的 `llm.Client`（只有 `CompleteStream` 与 `Provider`）；只实现了 `Chat` 的摘要模型改为实现 `CompleteStream`。
 - `loop-detect`（版本 2）：新增相近命令的提醒（`commandRepeats`，默认 6）。DeepSeek 实测中常反复运行同一测试、只换 `-count` 与输出过滤，或用 heredoc 反复重写同一个临时测试文件，每次结果都不同，原有的相同调用统计发现不了，直到用尽 100 次请求。

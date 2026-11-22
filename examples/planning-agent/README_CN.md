@@ -2,6 +2,8 @@
 
 [English](README.md)
 
+核心正式发布包含新记忆API的版本前，须通过Go workspace使用配套核心实现。当前模块声明的 `v0.60.0` 本身不包含这些新增API。
+
 在 Harness 仓库根目录用仓库指定的 Go 工具链运行。每个状态目录对应一次运行。
 
 ```sh
@@ -18,6 +20,19 @@ go run ./examples/planning-agent -scenario replan -state-dir "$(mktemp -d)"
 | `wait` | 在持久化输入点暂停，收到明确答复后记录确认。 |
 
 来源是嵌入程序的合成 JSON。提取产物的引用定位到原始材料的 `/count`，报告的引用定位到已验收提取产物的 `/count`。宿主在验收前补齐来源摘要和引用值摘要。本地审查另行核对提取值和报告总数。
+
+## 评估
+
+独立CLI使用12道冻结合成题，默认 `plan` 预登记108次试验：直接Agent、规划单槽及相同规划配置四槽，各题重复3次。各组根请求、token和上下文上限相同。模型只取得公开需求与来源材料，私有rubric标签仅交代码判分器。
+
+```sh
+go run ./examples/planning-agent/cmd/eval -out ./eval-plan-new
+go run ./examples/planning-agent/cmd/eval -backend scripted -out ./eval-scripted-new
+```
+
+输出目录须为新目录。`manifest.json` 在执行前固定试验身份与配置；`results.jsonl` 为每个试验保存唯一终态，包括失败和未开始项；`summary.json` 的分母是预登记总数。`scripted` 只验证本地运行器，不能衡量模型质量。
+
+显式传入 `-backend live -model MODEL -out ./eval-live-new` 使用已有OpenAI兼容provider。密钥通过 `OPENAI_API_KEY` 安全配置，`OPENAI_MODEL`、`OPENAI_BASE_URL` 提供可选默认，命令行可用 `-model`、`-base-url`、`-temperature` 覆盖非密钥设置。该模式会发起付费请求；每次试验持久状态隔离，物理请求对照各自根账本，规划/复核和重试均计费，未知用量/费用保留未知。该入口没有外部效果工具。确定性示例或scripted结果不能证明质量、耗时或成本收益。
 
 ## 恢复等待中的运行
 

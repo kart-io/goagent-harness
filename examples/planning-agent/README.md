@@ -2,6 +2,8 @@
 
 [简体中文](README_CN.md)
 
+Build against the accompanying core implementation with a Go workspace until a core version containing the new memory APIs is published. The module's current `v0.60.0` pin alone does not include those additions.
+
 Run from the Harness repository root with the Go toolchain selected by the repository. Each directory holds one run.
 
 ```sh
@@ -18,6 +20,19 @@ go run ./examples/planning-agent -scenario replan -state-dir "$(mktemp -d)"
 | `wait` | Pause at a durable input gate and record confirmation after an explicit answer. |
 
 Sources are synthetic JSON embedded in the executable. Extraction references locate `/count` in source inputs, and report references locate `/count` in accepted extraction artifacts. The host fills the source and quote digests before accepting an artifact. The local reviewer separately compares the extracted values and verifies the total.
+
+## Evaluation
+
+The separate CLI uses twelve frozen synthetic cases. Default `plan` preregisters 108 trials: direct Agent, planning with one slot, and the same planning configuration with four slots, each repeated three times. Every group has the same root request/token/context limits. Public requests and sources reach the model; private rubric labels reach only the code grader.
+
+```sh
+go run ./examples/planning-agent/cmd/eval -out ./eval-plan-new
+go run ./examples/planning-agent/cmd/eval -backend scripted -out ./eval-scripted-new
+```
+
+Each output directory must be new. `manifest.json` fixes trial identities and settings before execution. `results.jsonl` retains one terminal record per trial, including failed and unstarted work; `summary.json` uses the planned count as its denominator. `scripted` checks the runner locally and does not measure model quality.
+
+An explicit `-backend live -model MODEL -out ./eval-live-new` uses the existing OpenAI-compatible provider. Configure `OPENAI_API_KEY` securely; `OPENAI_MODEL` and `OPENAI_BASE_URL` are optional defaults, with `-model`, `-base-url` and `-temperature` overrides. This mode makes paid requests. It creates isolated durable state per trial, counts physical requests against each root ledger, includes planner/reviewer calls and retries, and reports unknown usage/cost as unknown. It has no external-effect tools. Results from the deterministic examples or scripted backend cannot demonstrate quality, latency or cost improvements.
 
 ## Resume a waiting run
 

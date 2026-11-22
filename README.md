@@ -8,7 +8,7 @@ GoAgent 提供模型与工具循环、类型化工作流、持久恢复、预算
 
 ## 模块与版本
 
-模块路径：`github.com/kart-io/goagent-harness`；Go 1.26 及以上；GoAgent 基线为 **v0.32.2**。
+模块路径：`github.com/kart-io/goagent-harness`；Go 1.27 及以上；go.mod 当前声明 GoAgent **v0.60.0**。本轮新增记忆API尚待核心正式发布，开发联调须使用相邻核心源码的Go workspace，不能将workspace通过视为独立依赖通过。
 本仓库由 GoAgent 拆出，源码位于 [kart-io/goagent-harness](https://github.com/kart-io/goagent-harness)，默认分支为 `main`。当前尚未发布版本标签，可克隆仓库运行测试与示例。
 迁移来源与导入路径对照见 [迁移指南](docs/MIGRATION.md) 和 [NOTICE](NOTICE)。
 
@@ -16,12 +16,14 @@ GoAgent 提供模型与工具循环、类型化工作流、持久恢复、预算
 
 | 路径 | 职责 |
 |---|---|
+| [`planning`](planning/README_CN.md) | 目标解析、固定槽依赖执行、证据验收与有界重规划（[English](planning/README.md)） |
 | `preset` | 配置加载、分层合并、组件装配、策略与沙箱校验、装配清单 |
 | `tools/coding` | 工作区读写编辑、检索、命令、Git、待办 |
 | `integration` | 通过公开 API 验证 Harness 与 GoAgent 持久图、审批和工具执行的组合 |
 | `sandbox` | 文件/网络策略、Docker/本机执行、供应商无关 Provider 与受管会话 |
 | `permissions` | Agent 会话权限、单次提权、角色模板与父子权限交集 |
 | `examples/coding-agent` | 配置驱动的编码修复案例 |
+| [`examples/planning-agent`](examples/planning-agent/README_CN.md) | 离线DAG、来源、重规划与持久等待案例（[English](examples/planning-agent/README.md)） |
 | `examples/plan-agent` | 计划模式、钩子、压缩和运行中交互案例 |
 
 ## 使用
