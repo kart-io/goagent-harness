@@ -59,10 +59,10 @@ func (a *Assembler) AddPromptContext(c builder.PromptContext) {
 // transientRetries 是模型请求遇到 429、5xx 与连接错误时的重试次数。
 const transientRetries = 3
 
-// Configure 把装配结果交给 Builder：系统提示词、工具与循环扩展点。
-// 编码 Agent 的会话很长，默认让模型看到可恢复的工具失败（WithToolErrorFeedback），
-// 并在组件钩子之后重试暂时性的模型请求失败（RetryTransient）。
-func Configure[C any, S core.State](b *builder.AgentBuilder[C, S], asm *Assembly) *builder.AgentBuilder[C, S] {
+// Configure applies assembled prompts, tools, and loop extensions to b.
+// It returns recoverable tool failures to the model and retries transient model
+// request errors after the component hooks.
+func Configure[S core.State](b *builder.AgentBuilder[S], asm *Assembly) *builder.AgentBuilder[S] {
 	l := asm.Loop
 	return b.WithSystemPrompt(asm.SystemPrompt).WithTools(asm.Tools...).
 		WithPreStep(l.PreStep...).WithRequestHook(l.Request...).WithTurnStopping(l.TurnStopping...).
