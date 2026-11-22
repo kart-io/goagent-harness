@@ -28,7 +28,7 @@ func NormalizeConfig(cfg Config) (Config, error) {
 		{"MaxStateBytes", &cfg.MaxStateBytes, 8388608},
 	} {
 		if *limit.value < 0 {
-			return Config{}, configError("%s must be nonnegative", limit.name)
+			return Config{}, configError("%s不能为负数", limit.name)
 		}
 		if *limit.value == 0 {
 			*limit.value = limit.fallback
@@ -39,19 +39,19 @@ func NormalizeConfig(cfg Config) (Config, error) {
 	remaining := (math.MaxInt - 12) / 4
 	for _, count := range []int{cfg.MaxGoalRounds, cfg.MaxWaves, cfg.MaxReplans} {
 		if count > remaining {
-			return Config{}, configError("workflow step limit overflows int")
+			return Config{}, configError("工作流步数上限超出int范围")
 		}
 		remaining -= count
 	}
 	if cfg.MaxTasks > math.MaxInt/cfg.MaxTaskAttempts {
-		return Config{}, configError("attempt capacity overflows int")
+		return Config{}, configError("尝试容量超出int范围")
 	}
 
 	if strings.TrimSpace(cfg.Version) == "" {
-		return Config{}, configError("Version is required")
+		return Config{}, configError("必须提供Version")
 	}
 	if len(cfg.Members) == 0 {
-		return Config{}, configError("at least one member is required")
+		return Config{}, configError("至少需要一个成员")
 	}
 	ids := make(map[string]struct{}, len(cfg.Members))
 	cfg.Members = slices.Clone(cfg.Members)
@@ -60,7 +60,7 @@ func NormalizeConfig(cfg Config) (Config, error) {
 			return Config{}, err
 		}
 		if _, found := ids[member.ID]; found {
-			return Config{}, configError("duplicate member ID %q", member.ID)
+			return Config{}, configError("成员ID %q重复", member.ID)
 		}
 		ids[member.ID] = struct{}{}
 		cfg.Members[i].Claims = slices.Clone(member.Claims)
@@ -77,36 +77,37 @@ func (cfg Config) maxSteps() int {
 
 func validateMemberConfig(member Member) error {
 	if strings.TrimSpace(member.ID) == "" {
-		return configError("member ID is required")
+		return configError("成员ID不能为空")
 	}
 	if strings.TrimSpace(member.Version) == "" || strings.TrimSpace(member.ManifestDigest) == "" {
-		return configError("member %q requires Version and ManifestDigest", member.ID)
+		return configError("成员%q必须提供Version和ManifestDigest", member.ID)
 	}
 	if member.EffectClass != "read_only" && member.EffectClass != "write" {
-		return configError("member %q has invalid EffectClass %q", member.ID, member.EffectClass)
+		return configError("成员%q的EffectClass %q无效", member.ID, member.EffectClass)
 	}
 
 	seen := make(map[string]struct{}, len(member.Claims))
 	hasWrite := false
 	for _, claim := range member.Claims {
 		if strings.TrimSpace(claim.Key) == "" {
-			return configError("member %q has a resource claim without a key", member.ID)
+			return configError("成员%q的资源声明缺少键", member.ID)
 		}
 		if claim.Mode != "read" && claim.Mode != "write" {
-			return configError("member %q has invalid resource claim mode %q", member.ID, claim.Mode)
+			return configError("成员%q的资源声明模式%q无效", member.ID, claim.Mode)
 		}
 		if _, found := seen[claim.Key]; found {
-			return configError("member %q repeats resource claim %q", member.ID, claim.Key)
+			return configError("成员%q的资源声明%q重复", member.ID, claim.Key)
 		}
 		seen[claim.Key] = struct{}{}
 		hasWrite = hasWrite || claim.Mode == "write"
 	}
 	if hasWrite != (member.EffectClass == "write") {
-		return configError("member %q has resource claims inconsistent with EffectClass %q", member.ID, member.EffectClass)
+		return configError("成员%q的资源声明与EffectClass %q不一致", member.ID, member.EffectClass)
 	}
 	return nil
 }
 
 func configError(format string, args ...any) error {
-	return agentErrors.NewInvalidConfigError("planning", "normalize_config", fmt.Sprintf(format, args...))
+	return agentErrors.New(agentErrors.CodeInvalidConfig, fmt.Sprintf(format, args...)).
+		WithComponent("planning").WithOperation("validate_config").WithContext("config_key", "normalize_config")
 }

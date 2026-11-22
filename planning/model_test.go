@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"math"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -138,6 +139,15 @@ func checkPlanningJSON[T any](t *testing.T, value T, keys ...string) []byte {
 }
 
 func TestConfigDefaultsAndBounds(t *testing.T) {
+	t.Run("配置错误使用中文", func(t *testing.T) {
+		_, err := NormalizeConfig(Config{})
+		if err == nil {
+			t.Fatal("缺少版本的配置通过了校验")
+		}
+		if message := err.Error(); !strings.Contains(message, "必须提供Version") || strings.Contains(message, "invalid configuration") {
+			t.Errorf("期望中文配置错误，得到 %q", message)
+		}
+	})
 	input := Config{Version: "v1", Members: []Member{{
 		ID: "writer", Version: "v2", ManifestDigest: "manifest", EffectClass: "write",
 		Claims: []ResourceClaim{{Key: "workspace", Mode: "write"}}, Capabilities: []string{"writing"},
