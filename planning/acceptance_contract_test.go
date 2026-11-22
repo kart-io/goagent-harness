@@ -87,6 +87,9 @@ func TestDraftRejectsBeforeAnyEffects(t *testing.T) {
 			p.Tasks[1].DependsOn[0] = "new:unknown"
 			p.Tasks[1].Inputs[0].DependencyID = "new:unknown"
 		}, "new:unknown"},
+		{"任务依赖环", func(_ *State, _ *Config, p *PlanDraft) {
+			p.Tasks[0].DependsOn = []string{p.Tasks[1].ID}
+		}, "依赖存在环"},
 		{"缺少本地验收项", func(_ *State, _ *Config, p *PlanDraft) {
 			p.Tasks[0].Criteria = nil
 		}, "缺少验收项"},
@@ -158,6 +161,58 @@ func TestReviewRequiresExactCriterionCoverage(t *testing.T) {
 		{"缺少验收项", func(r *Review) { r.Criteria = nil }, "有缺项"},
 		{"重复验收项", func(r *Review) { r.Criteria = append(r.Criteria, r.Criteria[0]) }, "验收结果"},
 		{"缺少必需证据", func(r *Review) { r.Criteria[0].EvidenceIDs = nil }, "缺少证据"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			candidate := review.clone()
+			tc.mutate(&candidate)
+			out, err := ValidateReview(in, candidate)
+			require.ErrorAs(t, err, new(*CandidateError))
+			require.ErrorContains(t, err, tc.reason)
+			require.NotEqual(t, "accept", out.Verdict)
+		})
+	}
+}
+
+func TestFinalReviewRequiresExactGoalCriterionCoverage(t *testing.T) {
+	goal, _, _ := validationFixture()
+	goal.Criteria[0].EvidenceRequired = true
+	goal.Criteria = append(goal.Criteria, Criterion{ID: "format", Description: "格式符合要求"})
+	a, result, cfg := assignmentFixture()
+	a.Task.CriterionIDs = append(a.Task.CriterionIDs, "format")
+	validated, err := ValidateTaskResult(a, result, cfg)
+	require.NoError(t, err)
+	require.Equal(t, "produced", validated.Outcome)
+	require.Len(t, validated.Artifacts, 1)
+
+	in := ReviewInput{
+		Final:         true,
+		Goal:          goal,
+		Plan:          Plan{Tasks: []TaskSpec{a.Task}},
+		Results:       []TaskResult{validated},
+		Accepted:      validated.Artifacts,
+		SubjectDigest: "final",
+	}
+	review := Review{
+		SubjectDigest: in.SubjectDigest,
+		Verdict:       "accept",
+		Reason:        "已核对目标及交付物",
+		Criteria: []CriterionResult{
+			{CriterionID: "g", Status: "pass", EvidenceIDs: []string{validated.Artifacts[0].ID}},
+			{CriterionID: "format", Status: "pass"},
+		},
+	}
+	accepted, err := ValidateReview(in, review)
+	require.NoError(t, err)
+	require.Equal(t, "accept", accepted.Verdict)
+
+	for _, tc := range []struct {
+		name   string
+		mutate func(*Review)
+		reason string
+	}{
+		{"缺少目标验收项", func(r *Review) { r.Criteria = r.Criteria[:1] }, "有缺项"},
+		{"重复目标验收项", func(r *Review) { r.Criteria = append(r.Criteria, r.Criteria[1]) }, "验收结果"},
+		{"未知目标验收项", func(r *Review) { r.Criteria[1].CriterionID = "local" }, "验收结果"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			candidate := review.clone()
