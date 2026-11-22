@@ -171,6 +171,7 @@ func TestPlanningCompatibility(t *testing.T) {
 	bound, run, controller, models, _ = build(false)
 	restored, err := run.Run(bound, runID, planningCompatibilityState{Results: []string{"ignored", "ignored"}}, "")
 	require.ErrorIs(t, err, agentErrors.ErrApprovalRequired)
+	require.Len(t, restored.Interrupts, 1)
 	require.Equal(t, point, restored.Interrupts[0])
 	require.EqualValues(t, 1, calls[0].Load())
 	require.EqualValues(t, 1, calls[1].Load(), "reopening an unanswered wait must not enter either slot")
@@ -178,6 +179,7 @@ func TestPlanningCompatibility(t *testing.T) {
 	var rejected *workflow.ResumeRejectedError
 	require.ErrorAs(t, err, &rejected)
 	require.True(t, invalid.Waiting)
+	require.Len(t, invalid.Interrupts, 1)
 	require.True(t, invalid.Interrupts[0].Rejected)
 	require.Equal(t, point.Key, invalid.Interrupts[0].Key, "invalid input must preserve the same wait")
 	require.Zero(t, merges.Load())
