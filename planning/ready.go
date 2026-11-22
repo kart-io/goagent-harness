@@ -153,18 +153,45 @@ func currentAccepted(s State, c Config) (map[string]Attempt, error) {
 }
 
 type attemptHistory struct {
-	last    int
-	pending bool
+	last       int
+	generation int
+	wrote      bool
+	pending    bool
 }
 
 func history(s State, root string, c Config) (map[string]attemptHistory, error) {
+	tasks := map[string]TaskSpec{}
+	for _, t := range s.Plan.Tasks {
+		tasks[t.ID] = t
+	}
+	members := memberDirectory(c)
 	h := map[string]attemptHistory{}
 	for _, a := range s.Attempts {
 		v := h[a.TaskID]
-		key, err := AttemptKey(root, a.TaskID, a.Generation, a.Number)
-		if err != nil || a.ExecutionKey != key || a.Number != v.last+1 || a.Number > c.MaxTaskAttempts {
-			return nil, invalid("任务%q尝试身份或序号无效", a.TaskID)
+		t, current := tasks[a.TaskID]
+		if root != "" {
+			key, err := AttemptKey(root, a.TaskID, a.Generation, a.Number)
+			if err != nil || a.ExecutionKey != key {
+				return nil, invalid("任务%q尝试键无效", a.TaskID)
+			}
 		}
+		if !nonempty(a.ExecutionKey) || a.Number != v.last+1 || a.Number > c.MaxTaskAttempts || a.Generation < 1 || a.Generation < v.generation || (current && a.Generation > t.Generation) {
+			return nil, invalid("任务%q尝试身份、代次或序号无效", a.TaskID)
+		}
+		if a.Status == "accepted" && (!current || a.Generation != t.Generation) {
+			return nil, invalid("验收尝试%q不属于当前代次", a.TaskID)
+		}
+		if a.EffectClass != "read_only" && a.EffectClass != "write" {
+			return nil, invalid("尝试%q缺少有效的冻结效果类别", a.ExecutionKey)
+		}
+		if current && a.Generation == t.Generation && members[t.MemberID].EffectClass != a.EffectClass {
+			return nil, invalid("尝试%q与当前代次的效果类别不符", a.ExecutionKey)
+		}
+		if v.wrote || (a.EffectClass == "write" && (s.WriteFreeze == nil || !current || a.Generation != t.Generation)) {
+			return nil, invalid("写尝试%q的冻结契约或代次无效", a.ExecutionKey)
+		}
+		v.generation = a.Generation
+		v.wrote = a.EffectClass == "write"
 		v.last = a.Number
 		switch a.Status {
 		case "rejected", "superseded", "accepted":
@@ -283,7 +310,7 @@ func allocate(state State, c Config, root string) (State, error) {
 		}
 		h := histories[t.ID]
 		m := members[t.MemberID]
-		if _, ok := accepted[t.ID]; ok || h.pending || h.last >= c.MaxTaskAttempts || (m.EffectClass == "write" && h.last > 0) || conflicts(m.Claims, used) {
+		if _, ok := accepted[t.ID]; ok || h.pending || h.last >= c.MaxTaskAttempts || h.wrote || conflicts(m.Claims, used) {
 			continue
 		}
 		inputs, ready := resolveInputs(t, accepted)
@@ -300,7 +327,7 @@ func allocate(state State, c Config, root string) (State, error) {
 		}
 		a.Slot = len(wave.Assignments)
 		wave.Assignments = append(wave.Assignments, a)
-		s.Attempts = append(s.Attempts, Attempt{TaskID: t.ID, Generation: t.Generation, Number: h.last + 1, ExecutionKey: a.AttemptKey, Fingerprint: a.Fingerprint, Status: "running"})
+		s.Attempts = append(s.Attempts, Attempt{TaskID: t.ID, EffectClass: m.EffectClass, Generation: t.Generation, Number: h.last + 1, ExecutionKey: a.AttemptKey, Fingerprint: a.Fingerprint, Status: "running"})
 		for _, claim := range m.Claims {
 			used[claim.Key] = claim.Mode
 		}

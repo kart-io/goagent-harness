@@ -271,7 +271,7 @@ func TestAllocationCapacityLimitsEveryNewCheckpoint(t *testing.T) {
 				a := prior.Plan.Tasks[1]
 				key, e := AttemptKey("r", a.ID, 1, 1)
 				require.NoError(t, e)
-				prior.Attempts = append(prior.Attempts, Attempt{TaskID: a.ID, ExecutionKey: key, Generation: 1, Number: 1, Status: "rejected"})
+				prior.Attempts = append(prior.Attempts, Attempt{TaskID: a.ID, EffectClass: "write", ExecutionKey: key, Generation: 1, Number: 1, Status: "rejected"})
 			}
 			before := prior.Clone()
 			c.MaxStateBytes = checkpointBytes(t, prior)

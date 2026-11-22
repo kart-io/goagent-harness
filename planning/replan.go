@@ -69,19 +69,15 @@ func AdoptPlan(state State, draft PlanDraft, cfg Config) (State, error) {
 		}
 	}
 	members := memberDirectory(c)
-	counts := map[string]int{}
-	for _, a := range s.Attempts {
-		counts[a.TaskID]++
-		if !validID(a.TaskID) || a.Generation < 1 || a.Number != counts[a.TaskID] || a.Number > c.MaxTaskAttempts {
-			return state, invalid("历史尝试身份或额度无效")
+	if s.Plan != nil {
+		histories, err := history(s, "", c)
+		if err != nil {
+			return state, err
 		}
-		switch a.Status {
-		case "accepted", "rejected", "superseded":
-		default:
-			return state, invalid("未决尝试%q需要恢复或宿主核对", a.ExecutionKey)
-		}
-		if t, ok := old[a.TaskID]; ok && members[t.MemberID].EffectClass == "write" && s.WriteFreeze == nil {
-			return state, invalid("已分配写任务缺少冻结契约")
+		for id, h := range histories {
+			if !validID(id) || h.pending {
+				return state, invalid("任务%q历史身份无效或存在未决尝试", id)
+			}
 		}
 	}
 	if s.WriteFreeze != nil {
@@ -91,17 +87,26 @@ func AdoptPlan(state State, draft PlanDraft, cfg Config) (State, error) {
 		}
 		for _, a := range s.Attempts {
 			task, ok := old[a.TaskID]
-			if !ok || members[task.MemberID].EffectClass != "write" {
+			if !ok || a.EffectClass != "write" {
 				continue
 			}
 			inputs, ready := resolveInputs(task, accepted)
-			if !ready || task.Generation != a.Generation || counts[task.ID] != 1 {
+			if !ready || task.Generation != a.Generation {
 				return adoptionStop(state, c, "已分配写任务的输入或代次无效")
 			}
 			fp, err := fingerprint(d, s.Goal, task, members[task.MemberID], inputs)
 			if err != nil || fp != a.Fingerprint {
 				return adoptionStop(state, c, "已分配写任务的执行指纹已改变")
 			}
+		}
+	}
+	for _, t := range draft.Tasks {
+		if _, ok := old[t.ID]; ok {
+			continue
+		}
+		label, local := strings.CutPrefix(t.ID, "new:")
+		if strings.HasPrefix(t.ID, "t-") || (s.Plan != nil && !local) || (local && !nonempty(label)) {
+			return state, invalid("非法候选任务身份%q", t.ID)
 		}
 	}
 	if len(draft.Tasks) > c.MaxTasks || len(draft.Groups) > c.MaxTasks {
@@ -116,9 +121,6 @@ func AdoptPlan(state State, draft PlanDraft, cfg Config) (State, error) {
 		if _, ok := old[t.ID]; ok {
 			ids[t.ID] = t.ID
 			continue
-		}
-		if strings.HasPrefix(t.ID, "t-") || (s.Plan != nil && !strings.HasPrefix(t.ID, "new:")) || (strings.HasPrefix(t.ID, "new:") && !nonempty(strings.TrimPrefix(t.ID, "new:"))) {
-			return state, invalid("非法候选任务身份%q", t.ID)
 		}
 		if cursor > c.MaxTasks || cursor == math.MaxInt {
 			return adoptionStop(state, c, "历史任务总数已达上限")

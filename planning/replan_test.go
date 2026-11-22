@@ -191,3 +191,79 @@ func TestReplanHistoricalIDBound(t *testing.T) {
 	require.Equal(t, "blocked", n.Outcome.Status)
 	require.Equal(t, s.NextTaskID, n.NextTaskID)
 }
+
+func TestHistoricalReadCanPrecedeFirstWrite(t *testing.T) {
+	s, c, a := replanFixture(t)
+	reader := a.MemberID
+	writer := c.Members[0]
+	writer.ID = "writer"
+	writer.EffectClass = "write"
+	writer.Claims = []ResourceClaim{{"file", "write"}}
+	c.Members = append(c.Members, writer)
+	s = acceptedReplanWave(t, s, c)
+	a.MemberID = writer.ID
+	n, e := AdoptPlan(s, PlanDraft{Tasks: []TaskSpec{a}}, c)
+	require.NoError(t, e)
+	n, e = AdoptPlan(n, PlanDraft{Tasks: []TaskSpec{a}}, c)
+	require.NoError(t, e)
+	n, e = Allocate(n, c, "root")
+	require.NoError(t, e)
+	require.NotNil(t, n.Wave)
+	require.Len(t, n.Attempts, 2)
+	require.Equal(t, 2, n.Attempts[1].Number)
+	require.Equal(t, 2, n.Attempts[1].Generation)
+	n = acceptWave(t, n, c)
+	n, e = AdoptPlan(n, PlanDraft{Tasks: []TaskSpec{a}}, c)
+	require.NoError(t, e)
+	require.Nil(t, n.Outcome)
+	a.MemberID = reader
+	stop, e := AdoptPlan(n, PlanDraft{Tasks: []TaskSpec{a}}, c)
+	require.NoError(t, e)
+	require.Equal(t, "blocked", stop.Outcome.Status)
+}
+func TestForgedCandidateIdentityPrecedesCapacity(t *testing.T) {
+	s, c, a := replanFixture(t)
+	c.MaxTasks = 2
+	s.NextTaskID = 3
+	a.ID = "new:x"
+	b := a.clone()
+	b.ID = "t-999999"
+	for _, tasks := range [][]TaskSpec{{a, b}, {b, a}} {
+		n, e := AdoptPlan(s, PlanDraft{Tasks: tasks}, c)
+		require.Error(t, e)
+		require.Equal(t, s, n)
+	}
+}
+func TestAttemptHistoryGenerationIntegrity(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		current     int
+		generations []int
+		status      string
+	}{{"future", 1, []int{3}, "rejected"}, {"decreasing", 3, []int{2, 1}, "rejected"}, {"stale accepted", 2, []int{1}, "accepted"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, c, a := replanFixture(t)
+			s, e := Allocate(s, c, "root")
+			require.NoError(t, e)
+			s.Wave = nil
+			sample := s.Attempts[0]
+			s.Attempts = nil
+			s.Plan.Tasks[0].Generation = tc.current
+			for i, g := range tc.generations {
+				at := sample
+				at.Number = i + 1
+				at.Generation = g
+				at.ExecutionKey, e = AttemptKey("root", a.ID, g, i+1)
+				require.NoError(t, e)
+				at.Status = tc.status
+				s.Attempts = append(s.Attempts, at)
+			}
+			n, e := AdoptPlan(s, PlanDraft{Tasks: []TaskSpec{a}}, c)
+			require.Error(t, e)
+			require.Equal(t, s, n)
+			n, e = Allocate(s, c, "root")
+			require.Error(t, e)
+			require.Equal(t, s, n)
+		})
+	}
+}

@@ -222,7 +222,9 @@ type TaskResult struct {
 
 // Attempt records the identity, execution result, and review of a task attempt.
 type Attempt struct {
-	TaskID string `json:"task_id"`
+	// EffectClass records the trusted member effect at allocation time.
+	EffectClass string `json:"effect_class"`
+	TaskID      string `json:"task_id"`
 	// ExecutionKey identifies the frozen execution of this attempt.
 	ExecutionKey string      `json:"execution_key"`
 	Fingerprint  string      `json:"fingerprint"`
