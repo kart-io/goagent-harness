@@ -34,8 +34,26 @@ func TestProgressProjectsParallelAndCurrentGeneration(t *testing.T) {
 func TestProgressReportsLatestAttemptReason(t *testing.T) {
 	s := planning.State{Plan: &planning.Plan{Tasks: []planning.TaskSpec{{ID: "t", MemberID: "r", Generation: 1}}},
 		Attempts: []planning.Attempt{
-			{TaskID: "t", Generation: 1, Number: 2, Status: "rejected", Result: &planning.TaskResult{Reason: "来源不足"}},
+			{
+				TaskID: "t", Generation: 1, Number: 2, Status: "rejected",
+				Result: &planning.TaskResult{Reason: "来源不足"},
+				Review: &planning.Review{Reason: "需要重试"},
+			},
 			{TaskID: "t", Generation: 1, Number: 1, Status: "produced"},
 		}}
 	require.Equal(t, []planning.ProgressItem{{TaskID: "t", MemberID: "r", Status: "rejected", Reason: "来源不足"}}, planning.Progress(s))
+}
+
+func TestProgressFallsBackToReviewReason(t *testing.T) {
+	s := planning.State{
+		Plan: &planning.Plan{Tasks: []planning.TaskSpec{{ID: "t", MemberID: "r", Generation: 1}}},
+		Attempts: []planning.Attempt{{
+			TaskID: "t", Generation: 1, Number: 1, Status: "rejected",
+			Result: &planning.TaskResult{Outcome: "produced"},
+			Review: &planning.Review{Verdict: "retry", Reason: "正文需要补充"},
+		}},
+	}
+	require.Equal(t, []planning.ProgressItem{
+		{TaskID: "t", MemberID: "r", Status: "rejected", Reason: "正文需要补充"},
+	}, planning.Progress(s))
 }

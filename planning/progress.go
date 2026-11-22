@@ -26,7 +26,7 @@ func Progress(s State) []ProgressItem {
 		item := ProgressItem{TaskID: task.ID, MemberID: task.MemberID, Status: "pending"}
 		if a, ok := latest[task.ID]; ok && a.Generation == task.Generation && a.Status != "superseded" {
 			item.Status = a.Status
-			if a.Result != nil {
+			if a.Result != nil && a.Result.Reason != "" {
 				item.Reason = a.Result.Reason
 			} else if a.Review != nil {
 				item.Reason = a.Review.Reason
