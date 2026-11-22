@@ -71,6 +71,9 @@ func boundedState(prev, next State, c Config) (State, error) {
 	if len(b) <= c.MaxStateBytes {
 		return next, nil
 	}
+	if freshInitialState(prev) {
+		return initialCapacityStop(), nil
+	}
 	stop := blocked(prev.Clone(), "状态大小上限")
 	b, e = json.Marshal(stop)
 	if e != nil {

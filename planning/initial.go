@@ -48,13 +48,16 @@ func prepareInitial(s State, c Config) (State, error) {
 	if len(data) <= c.MaxStateBytes {
 		return s, nil
 	}
-	// Only the initial input envelope can be discarded. New state fields are
-	// retained by default and therefore cannot accidentally erase future history.
-	history := s
-	history.Request = nil
-	history.Goal = GoalSpec{}
-	if !reflect.DeepEqual(history, State{}) {
+	if !freshInitialState(s) {
 		return s, fmt.Errorf("已提交的规划检查点超出状态大小上限 %d 字节", c.MaxStateBytes)
 	}
 	return initialCapacityStop(), nil
+}
+
+// Only the initial input envelope can be discarded. New state fields are
+// retained by default and therefore cannot accidentally erase future history.
+func freshInitialState(s State) bool {
+	s.Request = nil
+	s.Goal = GoalSpec{}
+	return reflect.DeepEqual(s, State{})
 }

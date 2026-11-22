@@ -155,3 +155,20 @@ func TestPrepareInitialStateBoundsFirstCheckpoint(t *testing.T) {
 	_, e = PrepareInitialState(initial, c)
 	require.Error(t, e)
 }
+
+func TestFreshRequestAtCapacityStopsAfterNormalization(t *testing.T) {
+	_, cfg, deps := graphFixture(t)
+	initial := State{Request: &GoalRequest{Text: strings.Repeat("x", 2048)}}
+	raw, err := json.Marshal(initial)
+	require.NoError(t, err)
+	cfg.MaxStateBytes = len(raw)
+	deps.GoalResolverVersion = "v1"
+	calls := 0
+	deps.GoalResolver = graphResolver(func(context.Context, GoalResolveInput) (GoalResolution, error) { calls++; return GoalResolution{}, nil })
+	prepared, err := PrepareInitialState(initial, cfg)
+	require.NoError(t, err)
+	require.Equal(t, initial, prepared)
+	done := runFixture(t, prepared, cfg, deps)
+	require.Equal(t, initialCapacityStop(), done)
+	require.Zero(t, calls)
+}
