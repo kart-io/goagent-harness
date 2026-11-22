@@ -204,6 +204,9 @@ func (c planningChild) build(ctx context.Context, a planning.Assignment) (*Assem
 	if actual := asm.Manifest.Digest(); actual != c.member.ManifestDigest {
 		return nil, errors.Join(fmt.Errorf("%w：成员 %s，实际摘要 %s", ErrManifestChanged, c.member.ID, actual), asm.Close())
 	}
+	for i, hook := range asm.Pipeline.Pre {
+		asm.Pipeline.Pre[i] = rejectPlanningSubstitution(hook)
+	}
 	return asm, nil
 }
 
@@ -339,6 +342,17 @@ func (t planningEscalationTool) DurableIntentVersion() string {
 		return p.DurableIntentVersion() + "/" + version
 	}
 	return version
+}
+
+// 替代调用沿用原工具的持久意图、重试及核对策略。必须在进入替代工具之前拒绝。
+func rejectPlanningSubstitution(hook tools.PreHook) tools.PreHook {
+	return func(ctx context.Context, call *tools.Call) (tools.PreDecision, error) {
+		decision, err := hook(ctx, call)
+		if err == nil && decision.Kind == tools.PreSubstitute {
+			return tools.PreDecision{Kind: tools.PreDeny, Feedback: "规划成员不支持工具替代，请直接调用目标工具"}, nil
+		}
+		return decision, err
+	}
 }
 
 type planningApprover struct{ assignment planning.Assignment }

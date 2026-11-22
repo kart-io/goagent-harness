@@ -43,6 +43,15 @@ func init() {
 		}))
 		return nil
 	}})
+	Register(Spec[struct{}]{Name: "test-planning-substitute-write", Version: "1", Build: func(_ context.Context, a *Assembler, _ *struct{}) error {
+		a.AddPreHook(func(_ context.Context, c *tools.Call) (tools.PreDecision, error) {
+			if c.Tool == "external" {
+				return tools.PreDecision{Kind: tools.PreSubstitute, Substitute: &tools.Substitution{Tool: "write_file", Args: map[string]any{"path": "report", "content": "unexpected", "sandbox_permissions": "workspace-write", "justification": "写入报告"}}}, nil
+			}
+			return tools.PreDecision{}, nil
+		})
+		return nil
+	}})
 	alias := workspaceSpec
 	alias.Name = "test-planning-workspace"
 	Register(alias)
@@ -392,10 +401,14 @@ func TestPlanningIgnoresStaleApprovalAnswer(t *testing.T) {
 	}
 }
 
-func TestPlanningExplicitSubstitutionChecksActualIntent(t *testing.T) {
+func TestPlanningExplicitSubstitutionRejectedBeforeApproval(t *testing.T) {
 	asm, a := planningFixture(t, func(_ context.Context, child *Assembly, _ planning.Assignment) (tools.OwnedRunnable[any, *builder.AgentOutput], error) {
 		run := core.NewRunnableFunc(func(ctx context.Context, _ any) (*builder.AgentOutput, error) {
-			_, err := child.Dispatcher.Invoke(ctx, tools.ToolRequest{Name: "search", Input: &interfaces.ToolInput{CallID: "lookup", Args: map[string]any{"query": "原先请求"}}})
+			out, err := child.Dispatcher.Invoke(ctx, tools.ToolRequest{Name: "search", Input: &interfaces.ToolInput{CallID: "lookup", Args: map[string]any{"query": "原先请求"}}})
+			require.NoError(t, err)
+			message, rejected := tools.RejectedResult(out)
+			require.True(t, rejected)
+			require.Contains(t, message, "规划成员不支持工具替代")
 			return &builder.AgentOutput{Result: `{"outcome":"produced"}`}, err
 		})
 		return tools.OwnedRunnable[any, *builder.AgentOutput]{Runnable: run, Close: func(context.Context) error { return nil }}, nil
@@ -403,14 +416,7 @@ func TestPlanningExplicitSubstitutionChecksActualIntent(t *testing.T) {
 	e, err := asm.PlanningExecutor()
 	require.NoError(t, err)
 	_, err = e.Execute(planningTestContext(t), a)
-	waits := durable.Waits(err)
-	require.Len(t, waits, 1, "%v", err)
-	var c durable.InterruptContinuation
-	require.NoError(t, json.Unmarshal(waits[0].Continuation, &c))
-	var info planningApproval
-	require.NoError(t, json.Unmarshal(c.Info, &info))
-	require.Equal(t, "browser", info.Tool)
-	require.Equal(t, sha256Hex(`{"query":"实际调用"}`), info.ArgsDigest)
+	require.NoError(t, err)
 }
 
 type interruptedPlanningModel struct {
@@ -544,17 +550,19 @@ func TestPlanningGraphUsesActualGlobalArtifactLimits(t *testing.T) {
 }
 
 func TestPlanningSingleCallEscalationResumesOnlyBeforeWrite(t *testing.T) {
-	for _, mode := range []string{"批准", "撤销", "回执丢失"} {
+	for _, mode := range []string{"批准", "撤销", "回执丢失", "替代"} {
 		t.Run(mode, func(t *testing.T) {
 			p := mustGetID(t, "lead", trusted(`presets:
 - id: lead
   components:
+  - {id: sub, use: test-planning-substitute-write}
   - {id: w, use: workspace, config: {executor: native}}
   - {id: c, use: coding-tools, config: {tools: [write_file]}}
   - {id: perms, use: permissions, config: {rules: [{tool: write_file, decision: allow}]}}
   - {id: team, use: planning-members, config: {members: [{id: writer, preset: child}]}}
 - id: child
   components:
+  - {id: src, use: test-planning-ambiguous}
   - {id: w, use: workspace, config: {executor: native, sandbox: read-only, maxSandbox: workspace-write}}
   - {id: c, use: coding-tools, config: {tools: [write_file]}}
   - {id: perms, use: permissions, config: {rules: [{tool: write_file, decision: allow}]}}`))
@@ -566,6 +574,14 @@ func TestPlanningSingleCallEscalationResumesOnlyBeforeWrite(t *testing.T) {
 			require.NoError(t, template.Close())
 			h := Host{Root: root, PlanningMembers: []planning.Member{m}, PlanningAgentFactory: func(_ context.Context, child *Assembly, _ planning.Assignment) (tools.OwnedRunnable[any, *builder.AgentOutput], error) {
 				run := core.NewRunnableFunc(func(ctx context.Context, _ any) (*builder.AgentOutput, error) {
+					if mode == "替代" {
+						out, err := child.Dispatcher.Invoke(ctx, tools.ToolRequest{Name: "external", Input: &interfaces.ToolInput{CallID: "source", Args: map[string]any{}}})
+						require.NoError(t, err)
+						message, rejected := tools.RejectedResult(out)
+						require.True(t, rejected)
+						require.Contains(t, message, "规划成员不支持工具替代")
+						return &builder.AgentOutput{Result: `{"outcome":"rejected","reason":"工具替代被拒绝"}`}, nil
+					}
 					out, err := child.Dispatcher.Invoke(ctx, tools.ToolRequest{Name: "write_file", Input: &interfaces.ToolInput{CallID: "write", Args: map[string]any{"path": "report", "content": "approved", "sandbox_permissions": "workspace-write", "justification": "生成约定输出"}}})
 					if err != nil {
 						return nil, err
@@ -587,6 +603,11 @@ func TestPlanningSingleCallEscalationResumesOnlyBeforeWrite(t *testing.T) {
 			store := &lostWriteReceipt{Store: durable.JournalStore(ctx), armed: mode == "回执丢失"}
 			ctx = durable.WithJournal(ctx, store)
 			_, err = exec.Execute(ctx, a)
+			if mode == "替代" {
+				require.NoError(t, err)
+				require.NoFileExists(t, filepath.Join(root, "report"))
+				return
+			}
 			waits := durable.Waits(err)
 			require.Len(t, waits, 1, "%v", err)
 			require.NoFileExists(t, filepath.Join(root, "report"))

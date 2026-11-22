@@ -267,6 +267,10 @@ func init() {
 
 秘密只能经 `Secret` 或 `Value`（字面量或 `{secret: NAME}`）类型的字段引用，Build 时用 `a.Secret`/`a.Value` 解析；`Dump`、错误与 `Assembly.Manifest` 中只出现引用。`Manifest.Digest()` 覆盖组件配置与版本、工具 schema、提示词与工作区，可用于在恢复持久运行前核对执行语义。
 
+## 规划成员的工具调用
+
+规划成员需要直接调用目标工具，以便持久日志记录实际工具及参数，并采用该工具的恢复和核对策略。成员自身或父级继承的调用前钩子返回 `PreSubstitute` 时，规划成员会在审批和工具执行前拒绝该调用。
+
 ## 测试
 
 ```bash
