@@ -210,8 +210,11 @@ func TestPlanningDistinguishesSourcesRecallAndGeneratedOutput(t *testing.T) {
 		require.NotContains(t, jointJSON(t, events), privateSentinel)
 	}
 	before := jointJSON(t, snap.State)
-	require.Contains(t, before, "BUS_SOURCE")
-	require.Contains(t, before, "GEN_OUTPUT")
+	require.Len(t, snap.State.Goal.Inputs, 1)
+	require.JSONEq(t, `{"name":"BUS_SOURCE"}`, string(snap.State.Goal.Inputs[0].Content))
+	require.NotNil(t, snap.State.Plan)
+	require.Len(t, snap.State.Plan.Tasks, 1)
+	require.Equal(t, "GEN_OUTPUT", snap.State.Plan.Tasks[0].Instruction)
 	require.NotContains(t, before, privateSentinel)
 	require.NoError(t, h.mem.Forget(h.ctx, id))
 	after, e := g.Snapshot(h.ctx, planningRoot)
@@ -272,6 +275,72 @@ func TestRecalledMemoryCannotBecomeAuthorizedBusinessSource(t *testing.T) {
 	require.Empty(t, snap.State.Attempts)
 	require.Empty(t, rc.Requests())
 	require.Equal(t, s.Goal.Inputs, snap.State.Goal.Inputs)
+}
+
+func TestExecutorCannotCiteRecalledMemoryAsArtifactSource(t *testing.T) {
+	h := openJointHost(t, t.TempDir())
+	id := jointSeed(t, h)
+	s, c, task := jointFixture(t)
+	pc, rc := jointPlanClient(t, task), jointReviewClient()
+	d := jointDeps(t, h, pc, rc)
+	planner := d.Planner
+	var recalled memory.Ref
+	d.Planner = jointPlanner(func(ctx context.Context, in p.PlanningInput) (p.PlanDraft, error) {
+		draft, err := planner.Plan(ctx, in)
+		if err != nil {
+			return draft, err
+		}
+		roleKey := durable.ChildKey(durable.ExecutionKey(ctx), "tool/planning_plan")
+		sessionKey := durable.ChildKey(roleKey, "agent/planner")
+		rec, err := durable.InspectOperation(durable.WithExecutionKey(ctx, sessionKey), "memory/recall")
+		require.NoError(t, err)
+		require.NotNil(t, rec)
+		var recall memory.Snapshot
+		require.NoError(t, json.Unmarshal(rec.Value, &recall))
+		require.Len(t, recall.Refs, 1)
+		recalled = recall.Refs[0]
+		require.Equal(t, memory.RefRecord, recalled.Kind)
+		require.Equal(t, id, recalled.ID)
+		return draft, nil
+	})
+	var sourceID string
+	d.Executor = jointExecutor(func(_ context.Context, a p.Assignment) (p.TaskResult, error) {
+		result := jointResult(a)
+		result.Artifacts[0].Sources[0].SourceID = recalled.ID
+		sourceID = result.Artifacts[0].Sources[0].SourceID
+		return result, nil
+	})
+	reviewer := d.Reviewer
+	d.Reviewer = jointReviewer(func(ctx context.Context, in p.ReviewInput) (p.Review, error) {
+		if r := in.Results[0]; r.Outcome == "rejected" {
+			return p.Review{
+				SubjectDigest: in.SubjectDigest,
+				Verdict:       "block",
+				Reason:        "来源未授权",
+				Criteria:      []p.CriterionResult{{CriterionID: "local", Status: "fail"}},
+				Issues: []p.Issue{{
+					ID: "bad-source", Category: "execution_rejected", Severity: "error",
+					TaskID: r.TaskID, AttemptKey: r.AttemptKey, Location: "out", Reason: r.Reason,
+				}},
+				Repair: &p.RepairDecision{Action: "block", IssueIDs: []string{"bad-source"}},
+			}, nil
+		}
+		return reviewer.Review(ctx, in)
+	})
+	snap, err := h.graph(t, c, d).Run(h.ctx, planningRoot, s, "")
+	require.NoError(t, err)
+	require.Len(t, pc.Requests(), 1)
+	require.Contains(t, jointJSON(t, pc.Requests()[0].Messages), privateSentinel)
+	require.Equal(t, "blocked", snap.State.Outcome.Status)
+	require.Equal(t, id, sourceID)
+	require.Empty(t, snap.State.Accepted)
+	require.Len(t, snap.State.Attempts, 1)
+	result := snap.State.Attempts[0].Result
+	require.NotNil(t, result)
+	require.Equal(t, "rejected", result.Outcome)
+	require.Equal(t, "invalid_result", result.FailureKind)
+	require.Contains(t, result.Reason, fmt.Sprintf("来源%q不可见", id))
+	require.Empty(t, result.Artifacts)
 }
 
 func TestForgetCannotReleaseUnknownWriteBarrier(t *testing.T) {

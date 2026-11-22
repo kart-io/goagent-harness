@@ -1,9 +1,13 @@
 package integration_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/gob"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,6 +27,7 @@ import (
 	"github.com/kart-io/goagent/memory"
 	"github.com/kart-io/goagent/store"
 	"github.com/kart-io/goagent/testing/mocks"
+	"github.com/klauspost/compress/zstd"
 	"github.com/stretchr/testify/require"
 )
 
@@ -188,15 +193,32 @@ func TestPlanningAndMaintenanceBudgetsAreIndependent(t *testing.T) {
 	require.Contains(t, jointJSON(t, pc.Requests()[0].Messages), "编写咖啡报告的经历")
 	require.Greater(t, embed.onlineCalls.Load(), writes)
 	// 将在线窗口耗尽后，后台仍有额度，额外调用必须在客户端前被拒绝。
+	query := memory.Query{Text: "咖啡报告"}
 	for i := int(embed.onlineCalls.Load()); i < online.Configuration().MaxModelRequests; i++ {
-		_, err := embed.Embed(h.ctx, "补充咖啡查询")
+		results, err := mem.Recall(h.ctx, query)
 		require.NoError(t, err)
+		require.NotEmpty(t, results)
 	}
 	prior := embed.onlineCalls.Load()
-	_, e = embed.Embed(h.ctx, "超过在线额度")
+	beforeChat, beforeEmbed := chat.Calls(), embed.backgroundCalls.Load()
+	backgroundBefore, e := window.Budget.Snapshot(h.ctx)
+	require.NoError(t, e)
+	require.Less(t, backgroundBefore.ReservedRequests, window.Budget.Configuration().MaxModelRequests)
+	onlineBefore, e := online.Snapshot(h.ctx)
+	require.NoError(t, e)
+	require.Equal(t, online.Configuration().MaxModelRequests, onlineBefore.ReservedRequests)
+	results, e := mem.Recall(h.ctx, query)
 	require.ErrorIs(t, e, agentErrors.ErrModelBudgetExceeded)
+	require.Empty(t, results)
 	require.Equal(t, prior, embed.onlineCalls.Load())
-	require.Less(t, chat.Calls()+int(embed.backgroundCalls.Load()), window.Budget.Configuration().MaxModelRequests)
+	require.Equal(t, beforeChat, chat.Calls())
+	require.Equal(t, beforeEmbed, embed.backgroundCalls.Load())
+	onlineAfter, e := online.Snapshot(h.ctx)
+	require.NoError(t, e)
+	require.Equal(t, onlineBefore, onlineAfter)
+	backgroundAfter, e := window.Budget.Snapshot(h.ctx)
+	require.NoError(t, e)
+	require.Equal(t, backgroundBefore, backgroundAfter)
 	for _, pair := range []struct {
 		c *budget.Controller
 		n int
@@ -211,6 +233,74 @@ func TestPlanningAndMaintenanceBudgetsAreIndependent(t *testing.T) {
 			require.Equal(t, 8*pair.n, snap.ReservedTokens)
 		}
 	}
+}
+
+// Read the reflection entry from the committed /4 head, falling back to its
+// referenced base if compaction has moved the entry out of the overlay.
+func persistedReflection(t *testing.T, ctx context.Context, fs durable.Scoped, scopeID string) memory.DerivationWork {
+	t.Helper()
+	ns := store.NamespaceKey(memory.NamespaceFrom(ctx))
+	scope := fs.Scope("memory:" + ns + "#" + scopeID)
+	snap, err := scope.Load(ctx, "memory/head")
+	require.NoError(t, err)
+	require.Equal(t, "memory-head/4", snap.Version)
+	var head struct {
+		Overlay string `json:"overlay"`
+		Base    struct {
+			Slot     int    `json:"slot"`
+			CommitID string `json:"commit_id"`
+		} `json:"base"`
+	}
+	require.NoError(t, json.Unmarshal(snap.Data, &head))
+	decoder, err := zstd.NewReader(nil)
+	require.NoError(t, err)
+	defer decoder.Close()
+	decode := func(encoded string, dst any) {
+		t.Helper()
+		packed, err := base64.StdEncoding.DecodeString(encoded)
+		require.NoError(t, err)
+		plain, err := decoder.DecodeAll(packed, nil)
+		require.NoError(t, err)
+		require.NoError(t, gob.NewDecoder(bytes.NewReader(plain)).Decode(dst))
+	}
+	if head.Overlay != "" {
+		var overlay struct {
+			Derivations map[string]struct {
+				Deleted bool
+				Value   memory.DerivationWork
+			}
+		}
+		decode(head.Overlay, &overlay)
+		if change, ok := overlay.Derivations["reflection"]; ok {
+			require.False(t, change.Deleted)
+			return change.Value
+		}
+	}
+	require.NotEmpty(t, head.Base.CommitID, "reflection missing from persisted head")
+	base, err := scope.Load(ctx, fmt.Sprintf("memory/base/%d", head.Base.Slot))
+	require.NoError(t, err)
+	require.Equal(t, "memory-state-blob/4", base.Version)
+	var parts []json.RawMessage
+	require.NoError(t, json.Unmarshal(base.Data, &parts))
+	require.Greater(t, len(parts), 1)
+	var header struct {
+		CommitID string `json:"commit_id"`
+	}
+	require.NoError(t, json.Unmarshal(parts[0], &header))
+	require.Equal(t, head.Base.CommitID, header.CommitID)
+	for _, part := range parts[1:] {
+		var encoded string
+		require.NoError(t, json.Unmarshal(part, &encoded))
+		var chunk struct {
+			Derivations map[string]memory.DerivationWork
+		}
+		decode(encoded, &chunk)
+		if work, ok := chunk.Derivations["reflection"]; ok {
+			return work
+		}
+	}
+	t.Fatal("reflection missing from committed /4 base")
+	return memory.DerivationWork{}
 }
 
 func TestMaintenanceWindowChangeDoesNotResetFailureAttempts(t *testing.T) {
@@ -260,11 +350,22 @@ func TestMaintenanceWindowChangeDoesNotResetFailureAttempts(t *testing.T) {
 		require.Equal(t, i, client.Calls())
 		now = now.Add(time.Second << uint(i-1))
 	}
+	turn, e := m.Turn(h.ctx)
+	require.NoError(t, e)
+	before := persistedReflection(t, h.ctx, fs, turn.Scope)
+	require.Greater(t, before.DirtySeq, before.DoneSeq)
+	require.Equal(t, 5, before.Attempts)
+	require.True(t, before.Paused)
 	m, second := open("second")
 	now = now.Add(30 * 24 * time.Hour)
 	_, e = m.ProcessPending(h.ctx)
 	require.NoError(t, e)
 	require.Equal(t, 5, client.Calls())
+	afterSwitch := persistedReflection(t, h.ctx, fs, turn.Scope)
+	require.Greater(t, afterSwitch.DirtySeq, afterSwitch.DoneSeq)
+	require.Equal(t, 5, afterSwitch.Attempts)
+	require.True(t, afterSwitch.Paused)
+	require.Equal(t, before, afterSwitch)
 	for _, v := range []struct {
 		c     *budget.Controller
 		count int
