@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"net/http"
@@ -44,9 +45,8 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer input.Close()
 	cases, err := memeval.LoadLongMemEval(input)
-	if err != nil {
+	if err = errors.Join(err, input.Close()); err != nil {
 		return err
 	}
 	var cl *memoryeval.Clients
