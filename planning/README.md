@@ -17,7 +17,7 @@ Use `State.Goal` for an already authorized structured goal, or `State.Request` w
 
 ## Contracts and limits
 
-`Parallelism` defaults to one. Opt into several slots explicitly and keep their count fixed throughout a run. The default bounds are 64 current tasks, 256 waves, 3 replans, 3 attempts per task, 4 goal-resolution rounds, 64 KiB per artifact, 1 MiB aggregate artifact content and 8 MiB serialized state. For these planning fields zero selects a default; negative values are rejected. Output-specific byte caps are enforced in addition to global caps. These limits do not replace the shared model/token budget.
+`Parallelism` defaults to one. Opt into several slots explicitly and keep their count fixed throughout a run. The default bounds are 64 current tasks, 256 waves, 3 replans, 3 attempts per task, 4 goal-resolution rounds, 64 KiB per artifact, 1 MiB summed artifact content per TaskResult and 8 MiB for the entire serialized State, including history and repeated references. Goal.Inputs source bodies are separately bounded by the same MaxArtifactTotalBytes value. For these planning fields zero selects a default; negative values are rejected. Output-specific byte caps are enforced in addition to global caps. These limits do not replace the shared model/token budget.
 
 Only accepted upstream artifacts satisfy dependencies. Replanning reuses accepted output only when its semantic fingerprint is unchanged; a changed input invalidates dependent output transitively. A waiting attempt keeps its business identity. Write tasks freeze their contract and ancestry; uncertain or already performed effects cannot be bypassed by changing a task ID or generation.
 
