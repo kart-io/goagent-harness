@@ -3,6 +3,7 @@ package memoryeval
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/kart-io/goagent/core/budget"
 	"github.com/kart-io/goagent/core/durable"
@@ -13,7 +14,7 @@ import (
 	"strings"
 )
 
-// Cost counts physical submissions, reconciled requests and provider-reported usage.
+// Cost counts client submissions, reconciled requests and provider-reported usage.
 type Cost struct {
 	Physical     int `json:"physical_requests"`
 	Ledger       int `json:"ledger_requests"`
@@ -71,9 +72,12 @@ func (m *meter) CompleteStream(ctx context.Context, r *llm.CompletionRequest) (<
 	}
 	var deltas strings.Builder
 	for {
+		if ctx.Err() != nil {
+			return nil, m.cancelUsage(ctx, key, stream)
+		}
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, m.cancelUsage(ctx, key, stream)
 		case chunk, ok := <-stream:
 			if !ok {
 				return nil, io.ErrUnexpectedEOF
@@ -86,6 +90,9 @@ func (m *meter) CompleteStream(ctx context.Context, r *llm.CompletionRequest) (<
 				if _, err = m.ctl.RecordEvidence(context.WithoutCancel(ctx), key, nil, e); err != nil {
 					return nil, err
 				}
+			}
+			if ctx.Err() != nil {
+				return nil, m.cancelUsage(ctx, key, stream)
 			}
 			if chunk.Error != nil {
 				return nil, chunk.Error
@@ -106,6 +113,24 @@ func (m *meter) CompleteStream(ctx context.Context, r *llm.CompletionRequest) (<
 			return out, nil
 		}
 	}
+}
+
+// 取消时只结算当时已缓冲的块，不等生产者继续发送或关闭；取消仍作为错误返回。
+func (m *meter) cancelUsage(ctx context.Context, key string, stream <-chan *llm.StreamChunk) error {
+	err := ctx.Err()
+	for range len(stream) {
+		select {
+		case chunk := <-stream:
+			if chunk != nil && chunk.Usage != nil {
+				e := usage.Evidence{Tokens: chunk.Usage.Tokens(), KnownFields: chunk.Usage.Fields()}
+				_, recordErr := m.ctl.RecordEvidence(context.WithoutCancel(ctx), key, nil, e)
+				err = errors.Join(err, recordErr)
+			}
+		default:
+			return err
+		}
+	}
+	return err
 }
 func (m *meter) cost(ctx context.Context) (Cost, error) {
 	s, err := m.ctl.Attribution(context.WithoutCancel(ctx))
