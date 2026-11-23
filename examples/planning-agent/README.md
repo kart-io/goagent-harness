@@ -2,7 +2,7 @@
 
 [简体中文](README_CN.md)
 
-Build against the accompanying core implementation with a Go workspace until a core version containing the new memory APIs is published. The module's current `v0.60.0` pin alone does not include those additions.
+The module pins the remotely available core pseudo-version `v0.60.1-0.20261123132038-4ccdc96483d1` (commit `4ccdc96483d1`), including the required memory APIs. No workspace or local replace is required. This pins an immutable development commit; no release tag was created.
 
 Run from the Harness repository root with the Go toolchain selected by the repository. Each directory holds one run.
 
