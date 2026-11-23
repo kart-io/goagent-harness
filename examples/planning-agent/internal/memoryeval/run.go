@@ -106,6 +106,27 @@ func makeManifest(cases []memeval.Case, c Config) (Manifest, error) {
 	if len(cases) == 0 || c.Repeats < 1 || c.Runes <= 0 || c.CoreRunes < 0 || c.CoreRunes > c.Runes || c.Requests < 1 || c.OutputTokens < 1 || c.ContextTokens <= c.OutputTokens || c.Tokens <= 0 || c.FormationModel == "" || c.ForegroundModel == "" || c.JudgeModel == "" {
 		return Manifest{}, fmt.Errorf("配置或用例无效")
 	}
+	seen := map[string]bool{}
+	for _, cs := range cases {
+		if cs.ID == "" || seen[cs.ID] || len(cs.Questions) == 0 {
+			return Manifest{}, fmt.Errorf("用例为空或重复")
+		}
+		seen[cs.ID] = true
+		sessions := map[string]bool{}
+		for _, session := range cs.Sessions {
+			if session.ID == "" || sessions[session.ID] {
+				return Manifest{}, fmt.Errorf("用例 %s 的会话标识为空或重复", cs.ID)
+			}
+			sessions[session.ID] = true
+		}
+		qs := map[string]bool{}
+		for _, q := range cs.Questions {
+			if q.ID == "" || qs[q.ID] {
+				return Manifest{}, fmt.Errorf("题号为空或重复")
+			}
+			qs[q.ID] = true
+		}
+	}
 	// 使用框架构造器校验块头和布局的联合限制，先于计划写入及任何模型准入。
 	dir, err := os.MkdirTemp("", "memory-eval-validation-*")
 	if err != nil {
@@ -120,20 +141,6 @@ func makeManifest(cases []memeval.Case, c Config) (Manifest, error) {
 		return Manifest{}, err
 	}
 	m := Manifest{PinPolicy: pinPolicy, Config: c, DatasetSHA256: fmt.Sprintf("%x", sha256.Sum256(data)), PromptVersion: "memeval-answer-v1", JudgeVersion: "memeval-longmemeval-v1", ResultsFile: "results.jsonl", SummaryFile: "summary.json"}
-	seen := map[string]bool{}
-	for _, cs := range cases {
-		if cs.ID == "" || seen[cs.ID] || len(cs.Questions) == 0 {
-			return m, fmt.Errorf("用例为空或重复")
-		}
-		seen[cs.ID] = true
-		qs := map[string]bool{}
-		for _, q := range cs.Questions {
-			if q.ID == "" || qs[q.ID] {
-				return m, fmt.Errorf("题号为空或重复")
-			}
-			qs[q.ID] = true
-		}
-	}
 	labels := []string{"off", "legacy", "layout"}
 	for r := 1; r <= c.Repeats; r++ {
 		for i, cs := range cases {

@@ -90,3 +90,36 @@ func TestIngestFailureAndCancellationKeepDenominator(t *testing.T) {
 	require.Equal(t, 3, s.NotRun)
 	require.Len(t, readRows(t, dir), 3)
 }
+
+func TestDuplicateSessionIDsRejectedBeforeFormation(t *testing.T) {
+	for _, id := range []string{"", "s"} {
+		t.Run("拒绝会话键_"+id, func(t *testing.T) {
+			cases, c := fixture()
+			cases[0].Sessions = append(cases[0].Sessions, memeval.Session{ID: id, Date: time.Unix(110, 0), Turns: []llm.Message{llm.UserMessage("second session tea")}})
+			forms, fore, judge := mocks.NewScriptedClient(), mocks.NewScriptedClient(), mocks.NewScriptedClient()
+			for _, clients := range []*Clients{nil, {forms, fore, judge}} {
+				out := filepath.Join(t.TempDir(), "out")
+				s, err := Run(t.Context(), out, cases, c, clients)
+				require.Error(t, err)
+				require.Zero(t, s.Planned)
+				_, err = os.Stat(out)
+				require.ErrorIs(t, err, os.ErrNotExist)
+				require.Zero(t, forms.Calls())
+				require.Zero(t, fore.Calls())
+				require.Zero(t, judge.Calls())
+			}
+		})
+	}
+	t.Run("不同会话正常形成", func(t *testing.T) {
+		cases, c := fixture()
+		cases[0].Sessions = append(cases[0].Sessions, memeval.Session{ID: "second", Date: time.Unix(110, 0), Turns: []llm.Message{llm.UserMessage("second session tea")}})
+		forms := mocks.NewScriptedClient(mocks.TextReply("形成一", `{"memories":[{"kind":"fact","content":"coffee fact","importance":0.8}]}`), mocks.TextReply("形成二", `{"memories":[]}`))
+		fore := mocks.NewScriptedClient(mocks.TextReply("作答一", "a"), mocks.TextReply("作答二", "a"), mocks.TextReply("作答三", "a"))
+		judge := mocks.NewScriptedClient(mocks.TextReply("判分一", "no"), mocks.TextReply("判分二", "no"), mocks.TextReply("判分三", "no"))
+		s, err := Run(t.Context(), filepath.Join(t.TempDir(), "out"), cases, c, &Clients{forms, fore, judge})
+		require.NoError(t, err)
+		require.Equal(t, 3, s.Completed)
+		require.Equal(t, 2, s.Formation[0].Cost.Ledger)
+		require.Equal(t, 2, forms.Calls())
+	})
+}
