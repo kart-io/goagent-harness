@@ -30,9 +30,9 @@ go run ./examples/planning-agent/cmd/eval -out ./eval-plan-new
 go run ./examples/planning-agent/cmd/eval -backend scripted -out ./eval-scripted-new
 ```
 
-输出目录须为新目录。`manifest.json` 在执行前固定试验身份与配置；`results.jsonl` 为每个试验保存唯一终态，包括失败和未开始项；`summary.json` 的分母是预登记总数。`scripted` 只验证本地运行器，不能衡量模型质量。
+输出目录须为新目录。`manifest.json` 在执行前固定试验身份与配置；`results.jsonl` 为每个试验保存唯一终态，包括失败和未开始项；`summary.json` 的分母是预登记总数。Ctrl-C（SIGINT）会取消当前调用，等待用量结算并写完所有计划项的终态和汇总，再以取消错误退出；不提供 SIGKILL 或进程崩溃后的恢复保证。`scripted` 只验证本地运行器，不能衡量模型质量。
 
-显式传入 `-backend live -model MODEL -out ./eval-live-new` 使用已有OpenAI兼容provider。密钥通过 `OPENAI_API_KEY` 安全配置，`OPENAI_MODEL`、`OPENAI_BASE_URL` 提供可选默认，命令行可用 `-model`、`-base-url`、`-temperature` 覆盖非密钥设置。该模式会发起付费请求；每次试验持久状态隔离，物理请求对照各自根账本，规划/复核和重试均计费，未知用量/费用保留未知。该入口没有外部效果工具。确定性示例或scripted结果不能证明质量、耗时或成本收益。
+显式传入 `-backend live -model MODEL -out ./eval-live-new` 使用已有OpenAI兼容provider。密钥通过 `OPENAI_API_KEY` 安全配置，`OPENAI_MODEL`、`OPENAI_BASE_URL` 提供可选默认，命令行可用 `-model`、`-base-url`、`-temperature` 覆盖非密钥设置。该模式会发起付费请求；每次试验持久状态隔离，客户端提交次数对照各自根账本，规划/复核和重试均计费，未知用量/费用保留未知。保留的 JSON 字段 `physical_requests` 统计提交给客户端的调用次数，包含传输前本地失败，不是独立观测的网络请求数。该入口没有外部效果工具。确定性示例或scripted结果不能证明质量、耗时或成本收益。
 
 独立的[记忆布局比较](internal/memoryeval/README_CN.md)复用 `memory/memeval`：每份历史每轮只形成一次记忆，按预登记且仅依赖历史的规则钉住记录，再复制快照供nil布局与配额布局使用。报告布局是否实际改变提交的上下文，形成、回答和独立判分费用分开记录。入口为 `cmd/memory-eval`，默认后端同样只生成计划。
 

@@ -3,21 +3,25 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 
 	"github.com/kart-io/goagent-harness/examples/planning-agent/internal/eval"
 )
 
 func main() {
-	if e := run(os.Args[1:]); e != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	if e := run(ctx, os.Args[1:]); e != nil {
 		fmt.Fprintln(os.Stderr, e)
 		os.Exit(1)
 	}
 }
-func run(args []string) error {
+func run(ctx context.Context, args []string) error {
 	f := flag.NewFlagSet("eval", flag.ContinueOnError)
 	dataset := f.String("dataset", "examples/planning-agent/testdata/eval-cases.json", "本地合成题集")
 	out := f.String("out", "", "新输出目录")
@@ -56,5 +60,6 @@ func run(args []string) error {
 	if *backend == "scripted" {
 		engine = eval.Scripted{}
 	}
-	return eval.Write(context.Background(), *out, d, m, engine)
+	err := eval.Write(ctx, *out, d, m, engine)
+	return errors.Join(err, ctx.Err())
 }
