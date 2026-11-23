@@ -8,7 +8,7 @@ GoAgent 提供模型与工具循环、类型化工作流、持久恢复、预算
 
 ## 模块与版本
 
-模块路径：`github.com/kart-io/goagent-harness`；Go 1.27 及以上；go.mod 固定 GoAgent **v0.60.1-0.20261123132038-4ccdc96483d1**，对应远端不可变提交 `4ccdc96483d1`，包含本轮新增记忆API。无需workspace或replace即可消费；本地联调仍可显式使用workspace。该依赖为Go伪版本，没有创建正式发布标签。
+模块路径：`github.com/kart-io/goagent-harness`；Go 1.27 及以上；go.mod 固定 GoAgent **v0.60.2-0.20261123144816-2a444fde983c**，对应远端不可变提交 `2a444fde983c`，包含新增记忆 API、公共 skills v3 依赖及 Runnable 取消收尾修复。无需workspace或replace即可消费；本地联调仍可显式使用workspace。该依赖为Go伪版本，没有创建正式发布标签。
 本仓库由 GoAgent 拆出，源码位于 [kart-io/goagent-harness](https://github.com/kart-io/goagent-harness)，默认分支为 `main`。当前尚未发布版本标签，可克隆仓库运行测试与示例。
 迁移来源与导入路径对照见 [迁移指南](docs/MIGRATION.md) 和 [NOTICE](NOTICE)。
 
@@ -94,20 +94,17 @@ Windows native 与 Landlock 尚未实现。平台验证范围和剩余限制见 
 
 ## 验证
 
-```bash
-# 仅使用 go.mod 中发布的 GoAgent 版本，不依赖本地源码。
-GOWORK=off go test ./...
-GOWORK=off go build ./...
+`go.mod` 声明的 GoAgent 依赖包含公共 `skills`、`tools/skill`、Memory API 与 Runnable 取消收尾修复。默认独立验证，推荐 Go 1.27.3：
 
-# 同时验证本地两个项目；参数可指定 GoAgent checkout，默认 ../goagent。
-./scripts/verify-goagent.sh ../goagent
-
-# 可选 Docker 案例，需要本地已有含 sh 的镜像。
-GOAGENT_CODING_DOCKER_IMAGE=alpine:3 go test -run Docker ./tools/coding
+```sh
+GOWORK=off GOTOOLCHAIN=go1.27.3 go test -mod=readonly -race -count=1 ./...
+GOWORK=off GOTOOLCHAIN=go1.27.3 go build -mod=readonly ./...
+GOWORK=off GOTOOLCHAIN=go1.27.3 go vet -mod=readonly ./...
 ```
 
-脚本临时创建 go.work 并在退出时清理，不修改两个项目的 go.mod 或现有 go.work。
-`make test`、`make race`、`make build` 验证独立模块；`make verify-local` 验证本地组合。
+联仓开发可执行 `GOTOOLCHAIN=go1.27.3 make verify-local`：脚本先检查声明依赖，再用临时 workspace 验证相邻的 `../goagent`；临时 workspace 在退出时清理。`make test/race/build` 强制关闭 workspace。
+
+可选 Docker 用例需配置镜像及相应用例开关。若 Colima 只共享用户目录，须将 `TMPDIR` 指向已共享目录，确保容器能读取测试工作区。Postgres 验证位于独立的 `integration/postgres` 模块，不包含在根模块 `./...` 中。
 
 ## 能力边界
 

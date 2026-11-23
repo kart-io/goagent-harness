@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	github.com/google/uuid v1.6.0
-	github.com/kart-io/goagent v0.60.1-0.20261123132038-4ccdc96483d1
+	github.com/kart-io/goagent v0.60.2-0.20261123144816-2a444fde983c
 	github.com/klauspost/compress v1.18.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/stretchr/testify v1.12.1

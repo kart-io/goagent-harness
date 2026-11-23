@@ -1,0 +1,29 @@
+{
+  "preset": "child",
+  "agent_id": "lead/team/reader",
+  "components": [
+    {
+      "id": "skills",
+      "use": "skills",
+      "version": "2",
+      "config": {
+        "Dirs": [
+          ".agents/skills",
+          ".claude/skills"
+        ]
+      },
+      "info": {
+        "skills": "audit@17436ad5785b"
+      }
+    }
+  ],
+  "tools": [
+    {
+      "name": "load_skill",
+      "component": "skills",
+      "schema_sha256": "3532406e523856a3f322122d4244c27d749f6f168f9a7e495217f8849fbe8899",
+      "description_sha256": "5d313d4772033331365c11911e2a10cba5aee51653dea21491284b50697671fe"
+    }
+  ],
+  "prompt_sha256": "06c1cec12f3e46bbd6d8786bbd83bb5cfcadeca0a0d24a21bd166188a3d10593"
+}

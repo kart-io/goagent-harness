@@ -172,13 +172,15 @@ func TestSkills(t *testing.T) {
 	require.Contains(t, asm.SystemPrompt, "- pdf：处理 PDF")
 	require.NotContains(t, asm.SystemPrompt, "被覆盖")
 	require.NotContains(t, asm.SystemPrompt, "secret-op")
+	out := invokeTool(t, asm, ToolLoadSkill, map[string]any{"name": "secret-op"})
+	require.Equal(t, "y", out.Result.(map[string]any)["instructions"], "hidden skills remain callable by name")
 
-	out := invokeTool(t, asm, ToolLoadSkill, map[string]any{"name": "pdf"})
+	out = invokeTool(t, asm, ToolLoadSkill, map[string]any{"name": "pdf"})
 	require.Equal(t, "先读 ref.md", out.Result.(map[string]any)["instructions"])
 	require.Equal(t, []string{"ref.md"}, out.Result.(map[string]any)["files"])
 	out = invokeTool(t, asm, ToolLoadSkill, map[string]any{"name": "pdf", "file": "ref.md"})
 	require.Equal(t, "参考内容", out.Result.(map[string]any)["content"])
-	requireRejected(t, invokeTool(t, asm, ToolLoadSkill, map[string]any{"name": "pdf", "file": "../../../etc/passwd"}), "has no file")
+	requireRejected(t, invokeTool(t, asm, ToolLoadSkill, map[string]any{"name": "pdf", "file": "../../../etc/passwd"}), "cannot read")
 	requireRejected(t, invokeTool(t, asm, ToolLoadSkill, map[string]any{"name": "nope"}), "unknown skill")
 	require.Contains(t, asm.Manifest.Components[0].Info["skills"], "pdf@")
 

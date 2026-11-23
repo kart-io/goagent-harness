@@ -75,8 +75,8 @@ github.com/gorilla/websocket v1.5.3 h1:saDtZ6Pbx/0u+bgYQ3q96pZgCzfhKXGPqt7kZ72aN
 github.com/gorilla/websocket v1.5.3/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
 github.com/invopop/jsonschema v0.14.0 h1:MHQqLhvpNUZfw+hM3AZDYK7jxO8FZoQeQM77g8iyZjg=
 github.com/invopop/jsonschema v0.14.0/go.mod h1:ygm6C2EaVNMBDPpaPlnOA2pFAxBnxGjFlMZABxm9n2I=
-github.com/kart-io/goagent v0.60.1-0.20261123132038-4ccdc96483d1 h1:aY3gMxb+OZ4ubue9R7qz9lwWZjBNpUsTafAm3RAjHtI=
-github.com/kart-io/goagent v0.60.1-0.20261123132038-4ccdc96483d1/go.mod h1:Dggqm3/NiU1UWvjGJYZNyU+nhwib+StwILkVRvV0ZUo=
+github.com/kart-io/goagent v0.60.2-0.20261123144816-2a444fde983c h1:j8PxsFubXjOgrJFylck72J3CwXU3M0sgPNoJBiDTghY=
+github.com/kart-io/goagent v0.60.2-0.20261123144816-2a444fde983c/go.mod h1:Dggqm3/NiU1UWvjGJYZNyU+nhwib+StwILkVRvV0ZUo=
 github.com/klauspost/compress v1.18.0 h1:c/Cqfb0r+Yi+JtIEq73FWXVkRonBlf0CRNYc8Zttxdo=
 github.com/klauspost/compress v1.18.0/go.mod h1:2Pp+KzxcywXVXMr50+X0Q/Lsb43OQHYWRCY2AiWywWQ=
 github.com/kr/pretty v0.3.1 h1:flRD4NNwYAUpkphVc1HcthR4KEIFJ65n8Mw5qdRn3LE=
