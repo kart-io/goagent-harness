@@ -16,11 +16,10 @@ Builder、Runnable、Graph、durable、budget、observe、Dispatcher/Pipeline、
 
 ## 依赖与验证
 
-当前 `go.mod` 声明 GoAgent `v0.49.3-0.20261107151110-dae60f4779d4`；新 Skills API 尚未包含在该依赖中。
-开发验证使用 [README 的临时 workspace 命令](../README.md#验证)，选择包含 `skills`、`tools/skill` 的 GoAgent checkout
-和 Go 1.27.3 工具链。独立发布前须更新到包含新 API 的可获取版本，并通过 `GOWORK=off` 的测试和构建。
+`go.mod` 固定的 GoAgent 不可变版本包含公共 Skills API、新增 Memory API 与 Runnable 取消收尾修复，无需本地 checkout 即可运行。
+使用 [README 的独立验证命令](../README.md#验证)，固定 Go 1.27.3 工具链并关闭 workspace。
 
-`make test/race/build` 强制关闭 workspace，`scripts/verify-goagent.sh` 也先检查版本依赖；依赖更新前使用上述临时 workspace。
+`make test/race/build` 强制关闭 workspace；`scripts/verify-goagent.sh` 先检查声明依赖，再用临时 workspace 验证相邻核心仓。
 根模块测试不包含独立 Postgres 模块，也不自动启用 Docker 用例。Sandbox 供应商适配器的独立验收见 [Sandbox 指南](guides/SANDBOX.md)。
 
 ## skills v3 文档迁移
@@ -28,6 +27,10 @@ Builder、Runnable、Graph、durable、budget、observe、Dispatcher/Pipeline、
 组件版本 3 除改用原始 `SKILL.md` 摘要外，也收紧 frontmatter 类型与长度校验：`disable-model-invocation: yes` 改为 `true` 或 `false`；纯数字名称写成 `name: '123'`；此前被忽略的 `metadata.version: 1` 现在需写成字符串 `'1'`。已声明类型的字段拒绝显式 `null`，可选字段无需值时应省略。`name` 最长 64 个 ASCII 字符，`description` 去除首尾空白后为 1–1024 个 Unicode 字符，`compatibility` 若出现则为 1–500 个 Unicode 字符。
 
 格式错误的被遮蔽同名文档仍会中止整个发现，与原行为一致；目录授权与工具权限策略不变。完整字段要求和示例见 [Preset v3 解析兼容性](../preset/README.md#v3-解析兼容性)。
+
+### planning 成员与持久运行
+
+skills v3 会改变成员 Manifest。宿主应按实际装配重建成员目录，为受影响任务建立新的执行范围/RunID；仅更换 SessionID 而沿用旧执行键不能迁移旧 pin 或图检查点。旧任务由匹配旧契约的版本完成或单独核对。未使用 skills 且指纹一致的运行无需因此重建。
 
 ## 示例与设计
 

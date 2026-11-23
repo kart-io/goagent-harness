@@ -216,8 +216,9 @@ compatibility: 需要本地项目目录
 
 ### 本地验证
 
-新 Skills API 尚未进入声明的 GoAgent 版本依赖。使用 [README 的临时 workspace 命令](../README.md#验证)
-验证两个 checkout。独立发布前需更新 GoAgent 依赖并通过 `GOWORK=off` 检查。
+声明的 GoAgent 依赖已包含公共 Skills API。使用 [README 的独立验证命令](../README.md#验证)，通过 `GOWORK=off` 检查；联仓开发可额外使用临时 workspace。
+
+planning 成员升级时须重建成员目录，并为受影响任务使用新的执行范围/RunID。仅更换 SessionID 不足以恢复旧 Manifest 或旧图检查点，详见[迁移说明](../docs/MIGRATION.md#planning-成员与持久运行)。
 
 ## 子 Agent
 
@@ -313,6 +314,10 @@ func init() {
 循环扩展点经 `AddPreStep`、`AddRequest`、`AddRequestError`、`AddTurnStopping`、`AddPromptSection`、`AddPromptContext` 贡献，由 `Configure` 交给 Builder。`AddRequest` 的钩子可按 `ModelRequest.Step`、`Final` 修改推理强度或换模型；持久运行中它的结果不入日志，必须是确定性的。`PromptContext` 能看到 `PromptScope.Final` 与 `Deadline`。
 
 秘密只能经 `Secret` 或 `Value`（字面量或 `{secret: NAME}`）类型的字段引用，Build 时用 `a.Secret`/`a.Value` 解析；`Dump`、错误与 `Assembly.Manifest` 中只出现引用。`Manifest.Digest()` 覆盖组件配置与版本、工具 schema、提示词与工作区，可用于在恢复持久运行前核对执行语义。
+
+## 规划成员的工具调用
+
+规划成员需要直接调用目标工具，以便持久日志记录实际工具及参数，并采用该工具的恢复和核对策略。成员自身或父级继承的调用前钩子返回 `PreSubstitute` 时，规划成员会在审批和工具执行前拒绝该调用。
 
 ## 测试
 

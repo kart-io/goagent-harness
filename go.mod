@@ -4,7 +4,8 @@ go 1.27.0
 
 require (
 	github.com/google/uuid v1.6.0
-	github.com/kart-io/goagent v0.60.0
+	github.com/kart-io/goagent v0.60.2-0.20261123144816-2a444fde983c
+	github.com/klauspost/compress v1.18.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/stretchr/testify v1.12.1
 	golang.org/x/crypto v0.58.0
@@ -32,7 +33,6 @@ require (
 	github.com/googleapis/gax-go/v2 v2.15.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
-	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/sashabaranov/go-openai v1.41.2 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect

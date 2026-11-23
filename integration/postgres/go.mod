@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/kart-io/goagent v0.60.0
+	github.com/kart-io/goagent v0.60.2-0.20261123144816-2a444fde983c
 	github.com/kart-io/goagent-contrib/durable/pgstore v0.5.1-0.20261109034914-3831bc788521
 	github.com/kart-io/goagent-harness v0.0.0
 	github.com/stretchr/testify v1.12.1

@@ -1,0 +1,492 @@
+{
+  "version": "planning-eval-v1",
+  "synthetic": true,
+  "cases": [
+    {
+      "id": "simple-01",
+      "category": "simple",
+      "request": "只根据材料提取组件名称与状态，中文答复，不执行外部写入。 结果使用统一JSON对象：facts为键值对象，evidence列出来源ID及json_pointer，abstain为布尔值。facts仅使用以下字段：component、status。无法确定时facts留空并置abstain=true。",
+      "sources": [
+        {
+          "id": "s1",
+          "title": "合成材料s1",
+          "content": {
+            "component": "cache",
+            "status": "ready"
+          }
+        }
+      ],
+      "rubric": {
+        "version": "planning-rubric-v1",
+        "expected_facts": {
+          "component": "cache",
+          "status": "ready"
+        },
+        "required_source_locators": [
+          {
+            "source_id": "s1",
+            "json_pointer": "/component"
+          },
+          {
+            "source_id": "s1",
+            "json_pointer": "/status"
+          }
+        ],
+        "must_abstain": false,
+        "expected_final_effects": []
+      },
+      "output_fields": [
+        "component",
+        "status"
+      ]
+    },
+    {
+      "id": "simple-02",
+      "category": "simple",
+      "request": "提取发布版本和文档语言，中文答复，不补充材料外信息。 结果使用统一JSON对象：facts为键值对象，evidence列出来源ID及json_pointer，abstain为布尔值。facts仅使用以下字段：release、language。无法确定时facts留空并置abstain=true。",
+      "sources": [
+        {
+          "id": "s1",
+          "title": "合成材料s1",
+          "content": {
+            "release": "v1.4.2",
+            "language": "zh-CN"
+          }
+        }
+      ],
+      "rubric": {
+        "version": "planning-rubric-v1",
+        "expected_facts": {
+          "release": "v1.4.2",
+          "language": "zh-CN"
+        },
+        "required_source_locators": [
+          {
+            "source_id": "s1",
+            "json_pointer": "/release"
+          },
+          {
+            "source_id": "s1",
+            "json_pointer": "/language"
+          }
+        ],
+        "must_abstain": false,
+        "expected_final_effects": []
+      },
+      "output_fields": [
+        "release",
+        "language"
+      ]
+    },
+    {
+      "id": "simple-03",
+      "category": "simple",
+      "request": "提取任务负责人和截止日，只生成结果草稿，不发送消息。 结果使用统一JSON对象：facts为键值对象，evidence列出来源ID及json_pointer，abstain为布尔值。facts仅使用以下字段：owner、deadline。无法确定时facts留空并置abstain=true。",
+      "sources": [
+        {
+          "id": "s1",
+          "title": "合成材料s1",
+          "content": {
+            "owner": "林",
+            "deadline": "2026-01-15"
+          }
+        }
+      ],
+      "rubric": {
+        "version": "planning-rubric-v1",
+        "expected_facts": {
+          "owner": "林",
+          "deadline": "2026-01-15"
+        },
+        "required_source_locators": [
+          {
+            "source_id": "s1",
+            "json_pointer": "/owner"
+          },
+          {
+            "source_id": "s1",
+            "json_pointer": "/deadline"
+          }
+        ],
+        "must_abstain": false,
+        "expected_final_effects": []
+      },
+      "output_fields": [
+        "owner",
+        "deadline"
+      ]
+    },
+    {
+      "id": "independent-01",
+      "category": "independent",
+      "request": "分别整理两份模块状态，带上各自来源；互不依赖，可独立处理。 结果使用统一JSON对象：facts为键值对象，evidence列出来源ID及json_pointer，abstain为布尔值。facts仅使用以下字段：reader、writer。无法确定时facts留空并置abstain=true。",
+      "sources": [
+        {
+          "id": "s1",
+          "title": "合成材料s1",
+          "content": {
+            "module": "reader",
+            "status": "ready"
+          }
+        },
+        {
+          "id": "s2",
+          "title": "合成材料s2",
+          "content": {
+            "module": "writer",
+            "status": "blocked"
+          }
+        }
+      ],
+      "rubric": {
+        "version": "planning-rubric-v1",
+        "expected_facts": {
+          "reader": "ready",
+          "writer": "blocked"
+        },
+        "required_source_locators": [
+          {
+            "source_id": "s1",
+            "json_pointer": "/status"
+          },
+          {
+            "source_id": "s2",
+            "json_pointer": "/status"
+          }
+        ],
+        "must_abstain": false,
+        "expected_final_effects": []
+      },
+      "output_fields": [
+        "reader",
+        "writer"
+      ]
+    },
+    {
+      "id": "independent-02",
+      "category": "independent",
+      "request": "汇总甲乙两组的地区与语言，不混淆材料归属。 结果使用统一JSON对象：facts为键值对象，evidence列出来源ID及json_pointer，abstain为布尔值。facts仅使用以下字段：甲地区、甲语言、乙地区、乙语言。无法确定时facts留空并置abstain=true。",
+      "sources": [
+        {
+          "id": "s1",
+          "title": "合成材料s1",
+          "content": {
+            "team": "甲",
+            "region": "东区",
+            "language": "中文"
+          }
+        },
+        {
+          "id": "s2",
+          "title": "合成材料s2",
+          "content": {
+            "team": "乙",
+            "region": "西区",
+            "language": "英语"
+          }
+        }
+      ],
+      "rubric": {
+        "version": "planning-rubric-v1",
+        "expected_facts": {
+          "甲地区": "东区",
+          "甲语言": "中文",
+          "乙地区": "西区",
+          "乙语言": "英语"
+        },
+        "required_source_locators": [
+          {
+            "source_id": "s1",
+            "json_pointer": "/region"
+          },
+          {
+            "source_id": "s1",
+            "json_pointer": "/language"
+          },
+          {
+            "source_id": "s2",
+            "json_pointer": "/region"
+          },
+          {
+            "source_id": "s2",
+            "json_pointer": "/language"
+          }
+        ],
+        "must_abstain": false,
+        "expected_final_effects": []
+      },
+      "output_fields": [
+        "甲地区",
+        "甲语言",
+        "乙地区",
+        "乙语言"
+      ]
+    },
+    {
+      "id": "independent-03",
+      "category": "independent",
+      "request": "汇总两份文件的测试通过数，各自列出，不推断共同总数。 结果使用统一JSON对象：facts为键值对象，evidence列出来源ID及json_pointer，abstain为布尔值。facts仅使用以下字段：a通过、b通过。无法确定时facts留空并置abstain=true。",
+      "sources": [
+        {
+          "id": "s1",
+          "title": "合成材料s1",
+          "content": {
+            "file": "a",
+            "passed": 7
+          }
+        },
+        {
+          "id": "s2",
+          "title": "合成材料s2",
+          "content": {
+            "file": "b",
+            "passed": 11
+          }
+        }
+      ],
+      "rubric": {
+        "version": "planning-rubric-v1",
+        "expected_facts": {
+          "a通过": 7,
+          "b通过": 11
+        },
+        "required_source_locators": [
+          {
+            "source_id": "s1",
+            "json_pointer": "/passed"
+          },
+          {
+            "source_id": "s2",
+            "json_pointer": "/passed"
+          }
+        ],
+        "must_abstain": false,
+        "expected_final_effects": []
+      },
+      "output_fields": [
+        "a通过",
+        "b通过"
+      ]
+    },
+    {
+      "id": "dependency-01",
+      "category": "dependency",
+      "request": "先解析批次数和每批件数，再计算总件数，引用输入；不进行外部操作。 结果使用统一JSON对象：facts为键值对象，evidence列出来源ID及json_pointer，abstain为布尔值。facts仅使用以下字段：总件数。无法确定时facts留空并置abstain=true。",
+      "sources": [
+        {
+          "id": "s1",
+          "title": "合成材料s1",
+          "content": {
+            "batches": 3
+          }
+        },
+        {
+          "id": "s2",
+          "title": "合成材料s2",
+          "content": {
+            "items_per_batch": 4
+          }
+        }
+      ],
+      "rubric": {
+        "version": "planning-rubric-v1",
+        "expected_facts": {
+          "总件数": 12
+        },
+        "required_source_locators": [
+          {
+            "source_id": "s1",
+            "json_pointer": "/batches"
+          },
+          {
+            "source_id": "s2",
+            "json_pointer": "/items_per_batch"
+          }
+        ],
+        "must_abstain": false,
+        "expected_final_effects": []
+      },
+      "output_fields": [
+        "总件数"
+      ]
+    },
+    {
+      "id": "dependency-02",
+      "category": "dependency",
+      "request": "根据关系找到服务依赖的组件，再查该组件的状态，输出最终依赖状态。 结果使用统一JSON对象：facts为键值对象，evidence列出来源ID及json_pointer，abstain为布尔值。facts仅使用以下字段：api依赖、依赖状态。无法确定时facts留空并置abstain=true。",
+      "sources": [
+        {
+          "id": "s1",
+          "title": "合成材料s1",
+          "content": {
+            "service": "api",
+            "depends_on": "queue"
+          }
+        },
+        {
+          "id": "s2",
+          "title": "合成材料s2",
+          "content": {
+            "components": {
+              "queue": "degraded",
+              "cache": "ready"
+            }
+          }
+        }
+      ],
+      "rubric": {
+        "version": "planning-rubric-v1",
+        "expected_facts": {
+          "api依赖": "queue",
+          "依赖状态": "degraded"
+        },
+        "required_source_locators": [
+          {
+            "source_id": "s1",
+            "json_pointer": "/depends_on"
+          },
+          {
+            "source_id": "s2",
+            "json_pointer": "/components/queue"
+          }
+        ],
+        "must_abstain": false,
+        "expected_final_effects": []
+      },
+      "output_fields": [
+        "api依赖",
+        "依赖状态"
+      ]
+    },
+    {
+      "id": "dependency-03",
+      "category": "dependency",
+      "request": "先由项目编号查负责人编号，再由负责人编号查姓名，只回答对应姓名。 结果使用统一JSON对象：facts为键值对象，evidence列出来源ID及json_pointer，abstain为布尔值。facts仅使用以下字段：p1负责人。无法确定时facts留空并置abstain=true。",
+      "sources": [
+        {
+          "id": "s1",
+          "title": "合成材料s1",
+          "content": {
+            "projects": {
+              "p1": "u2"
+            }
+          }
+        },
+        {
+          "id": "s2",
+          "title": "合成材料s2",
+          "content": {
+            "users": {
+              "u1": "周",
+              "u2": "陈"
+            }
+          }
+        }
+      ],
+      "rubric": {
+        "version": "planning-rubric-v1",
+        "expected_facts": {
+          "p1负责人": "陈"
+        },
+        "required_source_locators": [
+          {
+            "source_id": "s1",
+            "json_pointer": "/projects/p1"
+          },
+          {
+            "source_id": "s2",
+            "json_pointer": "/users/u2"
+          }
+        ],
+        "must_abstain": false,
+        "expected_final_effects": []
+      },
+      "output_fields": [
+        "p1负责人"
+      ]
+    },
+    {
+      "id": "insufficient-01",
+      "category": "insufficient",
+      "request": "材料是否足以确定2026-01-15的部署状态？不足时明确拒绝下确定结论。 结果使用统一JSON对象：facts为键值对象，evidence列出来源ID及json_pointer，abstain为布尔值。facts仅使用以下字段：部署状态。无法确定时facts留空并置abstain=true。",
+      "sources": [
+        {
+          "id": "s1",
+          "title": "合成材料s1",
+          "content": {
+            "observed_at": "2026-01-10",
+            "status": "ready"
+          }
+        }
+      ],
+      "rubric": {
+        "version": "planning-rubric-v1",
+        "expected_facts": {},
+        "required_source_locators": [],
+        "must_abstain": true,
+        "expected_final_effects": []
+      },
+      "output_fields": [
+        "部署状态"
+      ]
+    },
+    {
+      "id": "insufficient-02",
+      "category": "insufficient",
+      "request": "两份材料无优先级约定，请给出唯一负责人；若不能确定则说明冲突。 结果使用统一JSON对象：facts为键值对象，evidence列出来源ID及json_pointer，abstain为布尔值。facts仅使用以下字段：负责人。无法确定时facts留空并置abstain=true。",
+      "sources": [
+        {
+          "id": "s1",
+          "title": "合成材料s1",
+          "content": {
+            "task": "t1",
+            "owner": "赵"
+          }
+        },
+        {
+          "id": "s2",
+          "title": "合成材料s2",
+          "content": {
+            "task": "t1",
+            "owner": "钱"
+          }
+        }
+      ],
+      "rubric": {
+        "version": "planning-rubric-v1",
+        "expected_facts": {},
+        "required_source_locators": [],
+        "must_abstain": true,
+        "expected_final_effects": []
+      },
+      "output_fields": [
+        "负责人"
+      ]
+    },
+    {
+      "id": "insufficient-03",
+      "category": "insufficient",
+      "request": "根据材料回答任务预计完成日期；没有对应字段就明确资料不足，不猜测。 结果使用统一JSON对象：facts为键值对象，evidence列出来源ID及json_pointer，abstain为布尔值。facts仅使用以下字段：预计完成日期。无法确定时facts留空并置abstain=true。",
+      "sources": [
+        {
+          "id": "s1",
+          "title": "合成材料s1",
+          "content": {
+            "task": "t2",
+            "status": "in_progress"
+          }
+        }
+      ],
+      "rubric": {
+        "version": "planning-rubric-v1",
+        "expected_facts": {},
+        "required_source_locators": [],
+        "must_abstain": true,
+        "expected_final_effects": []
+      },
+      "output_fields": [
+        "预计完成日期"
+      ]
+    }
+  ]
+}

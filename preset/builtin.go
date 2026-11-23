@@ -274,6 +274,9 @@ var codingToolsSpec = Spec[CodingToolsConfig]{
 		for i, t := range out {
 			if info.MaxSandbox != ReadOnly && (slices.Contains(codingWriteTools, t.Name()) || slices.Contains(codingCommandTools, t.Name())) {
 				out[i] = permissions.DecorateTools([]interfaces.Tool{t})[0]
+				if _, planning := a.host.Approver.(planningApprover); planning && info.Executor == "native" {
+					out[i] = planningEscalationTool{out[i]}
+				}
 			}
 		}
 		a.AddTools(out...)

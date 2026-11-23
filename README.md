@@ -8,7 +8,7 @@ GoAgent 提供模型与工具循环、类型化工作流、持久恢复、预算
 
 ## 模块与版本
 
-模块路径：`github.com/kart-io/goagent-harness`。当前开发版本使用 GoAgent 新增的 Skills API，需要 Go 1.27 和对应的本地 GoAgent checkout；依赖版本与验证方法见下文。
+模块路径：`github.com/kart-io/goagent-harness`；Go 1.27 及以上；go.mod 固定 GoAgent **v0.60.2-0.20261123144816-2a444fde983c**，对应远端不可变提交 `2a444fde983c`，包含新增记忆 API、公共 skills v3 依赖及 Runnable 取消收尾修复。无需workspace或replace即可消费；本地联调仍可显式使用workspace。该依赖为Go伪版本，没有创建正式发布标签。
 本仓库由 GoAgent 拆出，源码位于 [kart-io/goagent-harness](https://github.com/kart-io/goagent-harness)，默认分支为 `main`。当前尚未发布版本标签，可克隆仓库运行测试与示例。
 迁移来源与导入路径对照见 [迁移指南](docs/MIGRATION.md) 和 [NOTICE](NOTICE)。
 
@@ -16,12 +16,14 @@ GoAgent 提供模型与工具循环、类型化工作流、持久恢复、预算
 
 | 路径 | 职责 |
 |---|---|
+| [`planning`](planning/README_CN.md) | 目标解析、固定槽依赖执行、证据验收与有界重规划（[English](planning/README.md)） |
 | `preset` | 配置加载、分层合并、组件装配、策略与沙箱校验、装配清单 |
 | `tools/coding` | 工作区读写编辑、检索、命令、Git、待办 |
 | `integration` | 通过公开 API 验证 Harness 与 GoAgent 持久图、审批和工具执行的组合 |
 | `sandbox` | 文件/网络策略、Docker/本机执行、供应商无关 Provider 与受管会话 |
 | `permissions` | Agent 会话权限、单次提权、角色模板与父子权限交集 |
 | `examples/coding-agent` | 配置驱动的编码修复案例 |
+| [`examples/planning-agent`](examples/planning-agent/README_CN.md) | 离线DAG、来源、重规划与持久等待案例（[English](examples/planning-agent/README.md)） |
 | `examples/plan-agent` | 计划模式、钩子、压缩和运行中交互案例 |
 
 ## 使用
@@ -92,31 +94,17 @@ Windows native 与 Landlock 尚未实现。平台验证范围和剩余限制见 
 
 ## 验证
 
-`go.mod` 声明的 GoAgent `v0.49.3-0.20261107151110-dae60f4779d4` 尚不包含新的 Skills API。开发时使用包含 `skills`、`tools/skill` 的本地 GoAgent checkout 和临时 workspace，推荐 Go 1.27.3：
+`go.mod` 声明的 GoAgent 依赖包含公共 `skills`、`tools/skill`、Memory API 与 Runnable 取消收尾修复。默认独立验证，推荐 Go 1.27.3：
 
-```bash
-# 在 Bash 中运行；按需将 ../goagent 换为本地 core checkout。
-(
-  set -euo pipefail
-  unset GOROOT
-  harness_root="$PWD"
-  core_root="$(cd ../goagent && pwd -P)"
-  workspace_dir="$(mktemp -d)"
-  trap 'rm -rf "$workspace_dir"' EXIT
-  GOWORK=off go -C "$workspace_dir" work init "$core_root" "$harness_root"
-  export GOWORK="$workspace_dir/go.work"
-  go list -m github.com/kart-io/goagent github.com/kart-io/goagent-harness
-  go test -mod=readonly -race -count=1 ./...
-  go build -mod=readonly ./...
-  go vet -mod=readonly ./...
-)
+```sh
+GOWORK=off GOTOOLCHAIN=go1.27.3 go test -mod=readonly -race -count=1 ./...
+GOWORK=off GOTOOLCHAIN=go1.27.3 go build -mod=readonly ./...
+GOWORK=off GOTOOLCHAIN=go1.27.3 go vet -mod=readonly ./...
 ```
 
-临时 workspace 在退出时清理，不修改模块依赖或现有 workspace。
+联仓开发可执行 `GOTOOLCHAIN=go1.27.3 make verify-local`：脚本先检查声明依赖，再用临时 workspace 验证相邻的 `../goagent`；临时 workspace 在退出时清理。`make test/race/build` 强制关闭 workspace。
 
-可选 Docker 用例需在上述子 shell 内配置镜像及相应用例开关；Postgres 验证位于独立的 `integration/postgres` 模块，不包含在根模块 `./...` 中。
-
-独立发布前，须将 GoAgent 依赖更新为包含新 API 的可获取版本，并通过 `GOWORK=off` 的测试和构建。`make test/race/build` 强制关闭 workspace，`make verify-local` 也先检查版本依赖；依赖更新前使用上面的命令。
+可选 Docker 用例需配置镜像及相应用例开关。若 Colima 只共享用户目录，须将 `TMPDIR` 指向已共享目录，确保容器能读取测试工作区。Postgres 验证位于独立的 `integration/postgres` 模块，不包含在根模块 `./...` 中。
 
 ## 能力边界
 

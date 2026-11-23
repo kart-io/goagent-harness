@@ -1,0 +1,61 @@
+# 离线规划示例
+
+[English](README.md)
+
+模块已固定可从远端获取的核心伪版本 `v0.60.1-0.20261123132038-4ccdc96483d1`（提交 `4ccdc96483d1`），包含所需记忆API，无需workspace或本地replace。这是不可变开发提交，没有创建发布标签。
+
+在 Harness 仓库根目录用仓库指定的 Go 工具链运行。每个状态目录对应一次运行。
+
+```sh
+go run ./examples/planning-agent -scenario dag -state-dir "$(mktemp -d)"
+go run ./examples/planning-agent -scenario sources -state-dir "$(mktemp -d)"
+go run ./examples/planning-agent -scenario replan -state-dir "$(mktemp -d)"
+```
+
+| 场景 | 预期结果 |
+| --- | --- |
+| `dag` | 提取并验收北站计数，再生成总数为 5 的报告。 |
+| `sources` | 第一批在两个槽位分别提取北站和南站计数。两项均验收后，下一批生成总数为 12 的报告。 |
+| `replan` | 最终审查要求采用北站更正材料。第 2 版计划复用已验收的南站产物，让旧北站产物和旧报告失效，再生成总数为 15 的报告。 |
+| `wait` | 在持久化输入点暂停，收到明确答复后记录确认。 |
+
+来源是嵌入程序的合成 JSON。提取产物的引用定位到原始材料的 `/count`，报告的引用定位到已验收提取产物的 `/count`。宿主在验收前补齐来源摘要和引用值摘要。本地审查另行核对提取值和报告总数。
+
+## 评估
+
+独立CLI使用12道冻结合成题，默认 `plan` 预登记108次试验：直接Agent、规划单槽及相同规划配置四槽，各题重复3次。各组根请求、token和上下文上限相同。模型只取得公开需求与来源材料，私有rubric标签仅交代码判分器。
+
+```sh
+go run ./examples/planning-agent/cmd/eval -out ./eval-plan-new
+go run ./examples/planning-agent/cmd/eval -backend scripted -out ./eval-scripted-new
+```
+
+输出目录须为新目录。`manifest.json` 在执行前固定试验身份与配置；`results.jsonl` 为每个试验保存唯一终态，包括失败和未开始项；`summary.json` 的分母是预登记总数。Ctrl-C（SIGINT）会取消当前调用，等待用量结算并写完所有计划项的终态和汇总，再以取消错误退出；不提供 SIGKILL 或进程崩溃后的恢复保证。`scripted` 只验证本地运行器，不能衡量模型质量。
+
+显式传入 `-backend live -model MODEL -out ./eval-live-new` 使用已有OpenAI兼容provider。密钥通过 `OPENAI_API_KEY` 安全配置，`OPENAI_MODEL`、`OPENAI_BASE_URL` 提供可选默认，命令行可用 `-model`、`-base-url`、`-temperature` 覆盖非密钥设置。该模式会发起付费请求；每次试验持久状态隔离，客户端提交次数对照各自根账本，规划/复核和重试均计费，未知用量/费用保留未知。保留的 JSON 字段 `physical_requests` 统计提交给客户端的调用次数，包含传输前本地失败，不是独立观测的网络请求数。该入口没有外部效果工具。确定性示例或scripted结果不能证明质量、耗时或成本收益。
+
+独立的[记忆布局比较](internal/memoryeval/README_CN.md)复用 `memory/memeval`：每份历史每轮只形成一次记忆，按预登记且仅依赖历史的规则钉住记录，再复制快照供nil布局与配额布局使用。报告布局是否实际改变提交的上下文，形成、回答和独立判分费用分开记录。入口为 `cmd/memory-eval`，默认后端同样只生成计划。
+
+## 恢复等待中的运行
+
+```sh
+state_dir="$(mktemp -d)"
+go run ./examples/planning-agent -scenario wait -state-dir "$state_dir"
+```
+
+第一条命令打印 `status: waiting` 后退出。把 JSON 输出中 `interrupts[0].key` 的值复制到变量 `resume_key`，再运行：
+
+```sh
+go run ./examples/planning-agent -scenario wait -state-dir "$state_dir" \
+  -resume-key "$resume_key" -answer true
+```
+
+等待点公布的 schema 为 `{"type":"boolean","const":true}`。按命令传入 JSON 布尔值 `true`，字符串 `"true"` 会被拒绝。用同一目录重新执行第一条命令可以查看持久化等待及其叶子中断键。实际部署时，宿主须先认证答复者并授权具体动作。中断键仅定位续跑点。
+
+## 状态、权限与成本
+
+- 文件存储保存图检查点、操作日志和预算账本。完成后输出规划 State，其中包含已验收产物和历史尝试。已失效的产物留在历史记录中，后续任务无法读取它们作为输入。业务结果通过 `outcome.status` 表达，执行错误写入 stderr 并返回非零退出码。
+- State 中包含有界来源 JSON 的冻结副本和派生产物。实际导入的源文件和原始记录遵循独立的存储与生命周期规则。删除专用示例状态目录会丢弃本地续跑信息和预算账本，嵌入的材料和独立保存的源记录仍在，外部副作用也无法借此撤销。
+- 示例使用宿主信任的本地只读成员，无网络、命令、工作区写入或模型后端。实际模型调用为零，无需 API 密钥。真实宿主须执行自己的工作区、工具、网络和审批权限，规划依赖和验收条件本身不授予访问权限。
+- 示例上限为 8 个任务、8 批、2 次重规划、每任务 2 次尝试、1 轮目标澄清。单个产物上限 1 KiB，产物合计上限 8 KiB，State 上限 128 KiB。持久根预算的模型请求、工具调用和 Agent 调用各限 8 次，预留 token 上限 4,096。本地确定性回调不消耗这些请求和调用额度。
+- 恢复须使用同一目录、同一场景和兼容的程序版本。图会检查工作流、状态、规划器、审查器、成员及配置版本，账本也会校验根预算策略。恢复旧检查点时请使用匹配的旧程序和配置。切换到不兼容版本或其他场景时请使用新目录。
